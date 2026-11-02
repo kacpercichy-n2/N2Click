@@ -123,6 +123,10 @@ const EXPECTED_POLICIES: Record<string, string[]> = {
   // Tabela jest platformowa i WSPÓLNA dla appek — polityki są permisywne, więc
   // wpisy `chat_*` niczego cudzego nie zawężają.
   'realtime.messages': ['select', 'insert'],
+  // Powiadomienia po przeniesieniu do `n2click` (20261102103000): polityka
+  // INSERT zawężona do typów generowanych w przeglądarce; select/update
+  // zostają z 20260723120000 (klucz `public.notifications` wyżej).
+  'n2click.notifications': ['insert'],
 };
 
 interface ParsedPolicy {
@@ -310,11 +314,15 @@ describe('konwencja plików migracji', () => {
       // Bez zmian RLS.
       '20260915120000_events_personal_times_and_absence_kind.sql',
       '20261005085434_service_role_app_schema.sql',
+      // Karta zadania v2 (docs/karta-v2/SPEC.md): rozmowa zadania = rozmowa
+      // czatu z context_type 'task' (załączniki, wzmianki, przypięcia, RPC
+      // chat_open_task / chat_set_pin / chat_set_follow, broadcast `read`),
+      // prywatny bucket chat-attachments, import komentarzy zadań BEZ
+      // powiadomień i trigger powiadomień task_message / task_mention.
       '20261102100000_task_conversations.sql',
       '20261102101000_task_chat_storage.sql',
       '20261102102000_task_chat_backfill.sql',
       '20261102103000_task_chat_notifications.sql',
-
     ]);
   });
 
@@ -460,5 +468,152 @@ describe('storage: prywatne awatary', () => {
       expect(policy.statement).toContain("split_part(name, '/', 1) = (select auth.uid())::text");
       expect(policy.statement).toContain('owner_id = (select auth.uid())::text');
     }
+  });
+});
+
+describe('karta zadania v2: rozmowy zadań, załączniki, powiadomienia', () => {
+  const kartaFiles = files.filter((f) => f.name.startsWith('20261102'));
+  const sqlOf = (name: string): string =>
+    normalize(files.find((f) => f.name === name)?.sql ?? '');
+  const conversations = sqlOf('20261102100000_task_conversations.sql');
+  const storage = sqlOf('20261102101000_task_chat_storage.sql');
+  const backfill = sqlOf('20261102102000_task_chat_backfill.sql');
+  const notify = sqlOf('20261102103000_task_chat_notifications.sql');
+  const kartaSql = kartaFiles.map((f) => normalize(f.sql)).join(' ');
+
+  /** Ciało funkcji `schema.name(` od nagłówka do zamykającego `$$;`. */
+  function functionBody(sql: string, qualifiedName: string): string {
+    const start = sql.indexOf(`create or replace function ${qualifiedName}(`);
+    expect(start, `brak funkcji ${qualifiedName}`).toBeGreaterThan(-1);
+    const end = sql.indexOf('$$;', sql.indexOf('$$', start) + 2);
+    return sql.slice(start, end + 3);
+  }
+
+  it('wszystkie cztery pliki istnieją i nie zawierają jawnych begin/commit', () => {
+    expect(kartaFiles.map((f) => f.name)).toHaveLength(4);
+    for (const f of kartaFiles) {
+      expect(normalize(f.sql), f.name).not.toMatch(/(^|;)\s*(begin|commit)\s*;/);
+    }
+  });
+
+  it("każda nowa funkcja ma set search_path = '' i nikt nie dostaje EXECUTE jako anon", () => {
+    const blocks = kartaSql.match(/create or replace function[\s\S]*?\$\$;/g) ?? [];
+    expect(blocks.length).toBeGreaterThanOrEqual(12);
+    for (const block of blocks) {
+      expect(block, block.slice(0, 90)).toContain("set search_path = ''");
+    }
+    expect(kartaSql).not.toMatch(/grant execute on function [^;]* to [^;]*\banon\b/);
+  });
+
+  it('chat_open_task: definer, reguła tasks_select, bez anon', () => {
+    const body = functionBody(conversations, 'n2click.chat_open_task');
+    expect(body).toContain('security definer');
+    expect(body).toContain('app.chat_can_read_task(p_task_id)');
+    expect(body).toContain("errcode = '42501'");
+    expect(conversations).toContain('revoke all on function n2click.chat_open_task(uuid) from public, anon');
+
+    // Lustro polityki tasks_select: has_app + (admin | manager | przypisany) + spółka projektu.
+    const rule = functionBody(conversations, 'app.chat_can_read_task');
+    for (const part of [
+      "core.has_app('n2click')",
+      'app.is_administrator()',
+      'app.is_manager()',
+      'app.is_assigned_to_task(t.id)',
+      'app.company_ok_project(t.project_id)',
+    ]) {
+      expect(rule).toContain(part);
+    }
+  });
+
+  it('członkostwo w rozmowie zadania wymaga bieżącego wglądu w zadanie', () => {
+    const member = functionBody(conversations, 'app.is_conversation_member');
+    expect(member).toContain("c.context_type is distinct from 'task' or app.chat_can_read_task(c.context_id)");
+  });
+
+  it('wyrocznia „czy osoba X widzi zadanie” nie jest wystawiona klientom', () => {
+    expect(conversations).toContain(
+      'revoke all on function app.chat_user_can_read_task(uuid, uuid) from public, anon, authenticated',
+    );
+    expect(kartaSql).not.toMatch(/grant execute on function app\.chat_user_can_read_task\(uuid, uuid\) to [^;]*authenticated/);
+    expect(kartaSql).not.toMatch(/grant execute on function app\.chat_can_read_task\(uuid\) to [^;]*authenticated/);
+  });
+
+  it('rozmowy zadań nie powstają ani nie dostają członków przez ogólne API', () => {
+    const insertConv = policies.find((p) => p.name === 'chat_conversations_insert' && p.statement.includes("'task'"));
+    expect(insertConv?.statement).toContain("context_type is distinct from 'task'");
+    const insertMember = policies.filter((p) => p.name === 'chat_conversation_members_insert').pop();
+    expect(insertMember?.statement).toContain('not app.chat_is_task_conversation(conversation_id)');
+  });
+
+  it('klient nie edytuje załączników, wzmianek, przypięć ani reply_to', () => {
+    expect(kartaSql).not.toMatch(/grant update \([^)]*(attachments|mention_ids|pinned_at|pinned_by|reply_to)/);
+  });
+
+  it('ścieżka załącznika jest sprawdzana po stronie serwera', () => {
+    const body = functionBody(conversations, 'n2click.chat_validate_message_content');
+    expect(body).toContain("new.conversation_id::text || '/'");
+    expect(body).toContain('new.pinned_at := null');
+    expect(conversations).toContain('before insert on n2click.messages for each row execute function n2click.chat_validate_message_content()');
+  });
+
+  it('auto-obserwujący tylko w rozmowach zadań i przed triggerem powiadomień', () => {
+    const body = functionBody(conversations, 'n2click.chat_message_auto_members');
+    expect(body).toContain("c.context_type = 'task'");
+    expect(body).toContain('app.chat_user_can_read_task(u.uid, v_task)');
+    expect(body).toContain('on conflict (conversation_id, user_id) do nothing');
+    expect('chat_messages_auto_members' < 'chat_messages_notify_task').toBe(true);
+  });
+
+  it('odczyt rozsyła event `read` na kanale rozmowy', () => {
+    const body = functionBody(conversations, 'n2click.chat_broadcast_read');
+    expect(body).toContain("'read', 'chat:conv:' || new.conversation_id::text, true");
+    expect(conversations).toContain('after update of last_read_at on n2click.conversation_members');
+  });
+
+  it('chat_overview zwraca muted_until członków', () => {
+    expect(functionBody(conversations, 'n2click.chat_overview')).toContain("'muted_until', mem.muted_until");
+  });
+
+  it('bucket chat-attachments: prywatny, 10 MB, obrazy bez SVG, bez UPDATE', () => {
+    expect(storage).toContain("'chat-attachments', 'chat-attachments', false, 10485760");
+    expect(storage).toContain("array['image/webp', 'image/png', 'image/jpeg', 'image/gif']");
+    expect(storage).not.toContain('svg');
+    expect(storage.indexOf("column_name = 'owner_id'")).toBeLessThan(storage.indexOf('on storage.objects'));
+    const chatStorage = policies.filter((p) => p.name.startsWith('chat_attachments_'));
+    expect(chatStorage.map((p) => p.command).sort()).toEqual(['delete', 'insert', 'select']);
+    for (const p of chatStorage) expect(p.statement).toContain("bucket_id = 'chat-attachments'");
+    const insert = chatStorage.find((p) => p.command === 'insert')!;
+    expect(insert.statement).toContain('owner_id = (select auth.uid())::text');
+    expect(insert.statement).toContain('app.chat_attachment_member(name)');
+    expect(chatStorage.find((p) => p.command === 'select')!.statement).toContain('app.chat_attachment_member(name)');
+    expect(chatStorage.find((p) => p.command === 'delete')!.statement).toContain('owner_id = (select auth.uid())::text');
+  });
+
+  it('backfill nie kasuje komentarzy i nie tworzy powiadomień', () => {
+    expect(backfill).not.toMatch(/delete from|truncate|drop table/);
+    expect(backfill).not.toContain('n2click.notifications');
+    expect(backfill).toContain('disable trigger chat_messages_notify_task');
+    expect(backfill).toContain('disable trigger chat_messages_stamp_insert');
+    expect(backfill).toContain('on conflict (id) do nothing');
+    // Trigger powiadomień powstaje dopiero w pliku PO backfillu.
+    expect(backfill).not.toContain('create trigger');
+    expect(files.findIndex((f) => f.name === '20261102102000_task_chat_backfill.sql')).toBeLessThan(
+      files.findIndex((f) => f.name === '20261102103000_task_chat_notifications.sql'),
+    );
+  });
+
+  it('powiadomienia: wzmianka wygrywa, odbiorca widzi zadanie, bez maila', () => {
+    const body = functionBody(notify, 'n2click.chat_notify_task_message');
+    expect(body).toContain("case when m.user_id = any(new.mention_ids) then 'task_mention' else 'task_message' end");
+    expect(body).toContain('m.user_id <> new.author_id');
+    expect(body).toContain('app.chat_user_can_read_task(m.user_id, v_task)');
+    expect(body).toContain('emailed_at');
+    expect(notify).toContain('after insert on n2click.messages for each row execute function n2click.chat_notify_task_message()');
+  });
+
+  it('klient nie podrobi task_message / task_mention', () => {
+    const insert = policies.filter((p) => p.name === 'notifications_insert').pop();
+    expect(insert?.table).toBe('n2click.notifications');
+    expect(insert?.statement).toContain("type in ('task_assigned', 'project_comment', 'bin_item')");
   });
 });
