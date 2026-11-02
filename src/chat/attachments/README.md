@@ -16,8 +16,9 @@ provider (as it does for ModalFrame).
   1 complete; not bytes transferred. Upsert is disabled.
 - `getSignedUrl(path, {download?:name, refresh?:boolean}?)` returns URL or null.
   Instance-scoped, capped in-memory cache, concurrent request deduplication,
-  one-hour TTL and five-minute refresh margin. UI refreshes mounted visible
-  images every 50 minutes. Download uses a separate signed URL with the storage
+  one-hour TTL and five-minute refresh margin. A thumbnail whose image fails
+  to load (expired signature) signs again once with `refresh:true`, then shows
+  a retry button. Download uses a separate signed URL with the storage
   download disposition rather than relying on cross-origin `download` alone.
 - `useAttachmentQueue(conversationId, uploader)` returns `pending`, `attachments`
   (ready results), `allReady`, `error`, `addFiles(files)`, `remove(id)`, `retry(id)`,
@@ -105,13 +106,13 @@ Pure imports can use `files.ts` / `types.ts` without loading React or Supabase.
 
 ## Verification and limits
 
-- `npx vitest run src/chat/attachments/files.test.ts src/chat/attachments/storage.test.ts`
-- With the L2 Vite server on 5182:
-  `zsh docs/karta-v2/heavy.sh node src/chat/attachments/attachments.browser-test.mjs`
-- Story fixture: `/src/chat/attachments/attachments.story.html` (no app route).
-  Uses a mock uploader, including first-attempt failure for `retry*` filenames.
-- Browser tests cover arrows, Escape, focus return, retry/remove, count rejection
-  and stale completion on conversation change, with reduced motion at 390 px.
+- Unit: `npx vitest run src/chat/attachments` (pure logic and storage adapter).
+- Browser: `zsh docs/karta-v2/heavy.sh node src/chat/attachments/attachments.e2e.mjs`
+  starts its own Vite server on port 5182 and drives `attachments.fixture.html`
+  (no app route, mock uploader that fails the first attempt for `retry*` names).
+  Covers grid and +n, expired URL refresh, lightbox arrows with focus on the
+  dialog, Escape and focus return, retry, remove, limit, paste, drop and stale
+  uploads, at 390 px with reduced motion.
 
 Hosted bucket/RLS behavior is untested against hosted DB. No migration is applied
 by L2. Removal/clear prevents stale queue writes but cannot cancel an already

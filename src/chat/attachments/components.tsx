@@ -32,23 +32,26 @@ export function AttachmentTray({ pending, onRemove, onRetry, error }: Attachment
 function useSignedImage(path: string, getSignedUrl: AttachmentUrlGetter, enabled: boolean) {
   const [state, setState] = useState<{ path: string; url: string | null; failed: boolean }>({ path, url: null, failed: false });
   const [attempt, setAttempt] = useState(0);
+  const autoRetried = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    const load = async () => {
+    void (async () => {
       let url: string | null = null;
       try { url = await getSignedUrl(path, { refresh: attempt > 0 }); } catch { /* user-facing fallback */ }
       if (!cancelled) setState({ path, url, failed: !url });
-    };
-    void load();
-    // Refresh visible mounted images ahead of the one-hour signature expiry.
-    const timer = window.setInterval(() => void load(), 50 * 60_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    })();
+    return () => { cancelled = true; };
   }, [path, getSignedUrl, enabled, attempt]);
   return { url: state.path === path ? state.url : null, failed: state.path === path && state.failed,
-    retry: () => setAttempt(value => value + 1), fail: () => setState({ path, url: null, failed: true }) };
+    retry: () => setAttempt(value => value + 1),
+    // An expired signature shows up as an image error: sign again once before showing the retry button.
+    fail: () => {
+      if (autoRetried.current !== path) { autoRetried.current = path; setAttempt(value => value + 1); return; }
+      setState({ path, url: null, failed: true });
+    } };
 }
-function AttachmentThumbnail({ attachment, getSignedUrl, onOpen, extra }: { attachment: ChatAttachment; getSignedUrl: AttachmentUrlGetter; onOpen: () => void; extra: number }) {
+function AttachmentThumbnail({ attachment, getSignedUrl, onOpen, extra, single }: { attachment: ChatAttachment; getSignedUrl: AttachmentUrlGetter; onOpen: () => void; extra: number; single: boolean }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -59,7 +62,7 @@ function AttachmentThumbnail({ attachment, getSignedUrl, onOpen, extra }: { atta
     return () => observer.disconnect();
   }, []);
   const image = useSignedImage(attachment.path, getSignedUrl, visible);
-  return <Tooltip text={image.failed ? 'Nie udało się wczytać obrazu. Kliknij, aby ponowić.' : attachment.name}><button ref={ref} type="button" className="attachment-thumbnail" style={{ aspectRatio: `${attachment.width || 1} / ${attachment.height || 1}` }} aria-label={extra ? `Otwórz ${attachment.name}, jeszcze ${extra} obrazów` : `Otwórz ${attachment.name}`} onClick={event => { if (image.failed) { image.retry(); return; } event.currentTarget.focus(); onOpen(); }}>
+  return <Tooltip text={image.failed ? 'Nie udało się wczytać obrazu. Kliknij, aby ponowić.' : attachment.name}><button ref={ref} type="button" className="attachment-thumbnail" style={single ? { aspectRatio: `${attachment.width || 1} / ${attachment.height || 1}`, maxWidth: attachment.width || undefined } : undefined} aria-label={extra ? `Otwórz ${attachment.name}, jeszcze ${extra} obrazów` : `Otwórz ${attachment.name}`} onClick={event => { if (image.failed) { image.retry(); return; } event.currentTarget.focus(); onOpen(); }}>
     {image.url ? <img src={image.url} alt={attachment.name} width={attachment.width} height={attachment.height} loading="lazy" onError={image.fail} /> : <span>{image.failed ? 'Ponów wczytywanie' : 'Wczytywanie obrazu'}</span>}
     {extra > 0 && <span className="attachment-more">+{extra}</span>}
   </button></Tooltip>;
@@ -69,7 +72,7 @@ export function AttachmentGrid({ attachments, getSignedUrl }: AttachmentGridProp
   const [index, setIndex] = useState<number | null>(null);
   if (!attachments.length) return null;
   return <><div className={`attachment-grid ${attachments.length === 1 ? 'attachment-grid-single' : ''}`}>
-    {attachments.slice(0, 4).map((attachment, position) => <AttachmentThumbnail key={attachment.path} attachment={attachment} getSignedUrl={getSignedUrl} onOpen={() => setIndex(position)} extra={position === 3 ? Math.max(0, attachments.length - 4) : 0} />)}
+    {attachments.slice(0, 4).map((attachment, position) => <AttachmentThumbnail key={attachment.path} attachment={attachment} getSignedUrl={getSignedUrl} onOpen={() => setIndex(position)} extra={position === 3 ? Math.max(0, attachments.length - 4) : 0} single={attachments.length === 1} />)}
   </div>{index !== null && <ImageLightbox attachments={attachments} initialIndex={index} getSignedUrl={getSignedUrl} onClose={() => setIndex(null)} />}</>;
 }
 export interface ImageLightboxProps extends AttachmentGridProps { initialIndex?: number; onClose: () => void }
@@ -93,10 +96,22 @@ export function ImageLightbox({ attachments, initialIndex = 0, getSignedUrl, onC
     }).catch(() => { if (!cancelled) setDownload(null); });
     return () => { cancelled = true; };
   }, [attachment, getSignedUrl]);
-  const move = (delta: number) => setIndex(value => (value + delta + attachments.length) % attachments.length);
+  const count = attachments.length;
+  // Window listener: focus may sit on the dialog card itself, not inside our content.
+  useEffect(() => {
+    if (count < 2) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      setIndex(value => (value + (event.key === 'ArrowLeft' ? -1 : 1) + count) % count);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [count]);
+  const move = (delta: number) => setIndex(value => (value + delta + count) % count);
   if (!attachment) return null;
   return <MotionConfig reducedMotion="user"><ModalFrame ariaLabel="Podgląd obrazu" cardClassName="attachment-lightbox" onRequestClose={onClose}>
-    <div className="attachment-lightbox-content" onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); event.stopPropagation(); move(event.key === 'ArrowLeft' ? -1 : 1); } }}>
+    <div className="attachment-lightbox-content">
       <header><span aria-live="polite">{currentIndex + 1} / {attachments.length}: {attachment.name}</span>
         {download?.path === attachment.path && <Tooltip text="Pobierz obraz"><a className="attachment-control" href={download.url} download={attachment.name} aria-label="Pobierz obraz"><Download size={20} /></a></Tooltip>}
         <Tooltip text="Zamknij podgląd"><button type="button" className="attachment-control" onClick={onClose} aria-label="Zamknij podgląd"><X size={20} /></button></Tooltip>
