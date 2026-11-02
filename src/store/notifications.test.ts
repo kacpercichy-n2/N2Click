@@ -872,4 +872,70 @@ describe('powiadomienia z rozmowy zadania (task_message / task_mention)', () => 
     expect(notificationsForPerson(after, 'zuzia', liveNow())[0].read).toBe(true);
     expect(reducer(after, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' })).toBe(after);
   });
+
+  // L1-DB-NOTES ryzyko 8: oznaczenie ustawia też `readAt` wiersza (lustro
+  // pisze `read_at`), więc baza zamyka zbiorczy task_message bez czekania na
+  // zapis profilu.
+  function markable(notifications: Notification[]): AppData {
+    return state({
+      currentUserId: 'zuzia',
+      people: [person('zuzia', 'Zuzia'), person('ola', 'Ola Nowak')],
+      tasks: [task('t1', { title: 'Key visual' })],
+      notifications,
+    });
+  }
+
+  it('MARK_NOTIFICATION_ENTRY_READ ustawia readAt TYLKO wskazanego wiersza, reszta zachowuje referencje', () => {
+    const before = markable([
+      row('live', 'task_message', { createdAt: hoursAgo(1) }),
+      row('men', 'task_mention', { createdAt: hoursAgo(2) }),
+    ]);
+    const t0 = Date.now();
+    const after = reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' });
+    const marked = after.notifications.find((n) => n.id === 'live')!;
+    expect(marked.readAt).not.toBe('');
+    expect(Date.parse(marked.readAt)).toBeGreaterThanOrEqual(t0 - 1000);
+    expect(after.notifications.find((n) => n.id === 'men')).toBe(before.notifications[1]);
+    expect(after.people.find((p) => p.id === 'zuzia')!.notificationsReadIds).toEqual(['notification:live']);
+    // Ponowne oznaczenie: ten sam stan (inwariant 6), readAt się nie przesuwa.
+    expect(reducer(after, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' })).toBe(after);
+  });
+
+  it('wpisy spoza wierszy (mention:, assignment:) nie ruszają kolekcji notifications', () => {
+    const before = markable([row('live', 'task_message', { createdAt: hoursAgo(1) })]);
+    before.comments = [comment({ id: 'c1', authorId: 'ola', entityId: 't1', mentionIds: ['zuzia'], createdAt: hoursAgo(1) })];
+    const after = reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'mention:c1' });
+    expect(after).not.toBe(before);
+    expect(after.notifications).toBe(before.notifications);
+  });
+
+  it('niepoprawne polecenia zachowują referencję stanu i wiersze bez readAt', () => {
+    const before = markable([
+      row('live', 'task_message', { createdAt: hoursAgo(1) }),
+      row('foreign', 'task_message', { recipientId: 'ola', createdAt: hoursAgo(1) }),
+      row('done', 'task_message', { createdAt: hoursAgo(1), readAt: hoursAgo(0.5) }),
+      row('stale', 'task_message', { createdAt: OLD }),
+    ]);
+    for (const entryId of [
+      'notification:missing',
+      'notification:foreign',
+      'notification:done',
+      'notification:stale',
+      'notification:',
+      'live',
+      '',
+    ]) {
+      expect(reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId })).toBe(before);
+    }
+    const noUser = { ...before, currentUserId: '' };
+    expect(reducer(noUser, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' })).toBe(noUser);
+  });
+
+  it('wpis przeczytany watermarkiem nie zmienia stanu (wiersz zostaje z readAt pustym)', () => {
+    const before = markable([row('live', 'task_message', { createdAt: hoursAgo(2) })]);
+    before.people = before.people.map((p) =>
+      p.id === 'zuzia' ? { ...p, notificationsSeenAt: hoursAgo(1) } : p,
+    );
+    expect(reducer(before, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: 'notification:live' })).toBe(before);
+  });
 });

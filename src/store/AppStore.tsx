@@ -5017,11 +5017,27 @@ export function reducer(state: AppData, action: Action): AppData {
       const entry = notificationsForPerson(state, meId, nowIso()).find((n) => n.id === entryId);
       if (!entry || entry.read) return state;
       const readIds = [...(me.notificationsReadIds ?? []), entryId];
+      const people = state.people.map((p) =>
+        p.id === meId ? { ...p, notificationsReadIds: readIds } : p,
+      );
+      // Wpis z rozmowy zadania (`notification:<id>`) to wiersz `notifications`:
+      // ustawiamy też jego `readAt`, które lustro wypycha jako UPDATE `read_at`
+      // (cloudMirror 8d). Baza zamyka wtedy zbiorczy task_message od razu, bez
+      // czekania na zapis profilu (L1-DB-NOTES, ryzyko 8). Tylko WŁASNY,
+      // nieprzeczytany wiersz; reszta jak dotąd (sam zbiór id).
+      const rowId = entryId.startsWith('notification:') ? entryId.slice('notification:'.length) : '';
+      const row =
+        rowId === ''
+          ? undefined
+          : state.notifications.find(
+              (n) => n.id === rowId && n.recipientId === meId && n.readAt === '',
+            );
+      if (!row) return { ...state, people };
+      const readAt = nowIso();
       return {
         ...state,
-        people: state.people.map((p) =>
-          p.id === meId ? { ...p, notificationsReadIds: readIds } : p,
-        ),
+        people,
+        notifications: state.notifications.map((n) => (n === row ? { ...n, readAt } : n)),
       };
     }
     case 'ADD_TIME_ENTRY':

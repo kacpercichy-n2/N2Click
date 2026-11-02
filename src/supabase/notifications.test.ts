@@ -246,4 +246,24 @@ describe('diffToCloudOps — lustro read_at powiadomień', () => {
     expect(notifOps[0].match).toEqual({ id: NID });
     expect(typeof (notifOps[0].row as { read_at?: unknown }).read_at).toBe('string');
   });
+
+  it('MARK_NOTIFICATION_ENTRY_READ wpisu rozmowy zadania pisze read_at wiersza (L1 ryzyko 8)', () => {
+    const NID = uuid('notif-task-msg');
+    const notif: Notification = {
+      id: NID,
+      recipientId: PB,
+      type: 'task_message',
+      payload: { taskId: TK, actorId: PA },
+      readAt: '',
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    const prev: AppData = { ...localFixture(), currentUserId: PB, notifications: [notif] };
+    const next = reducer(prev, { type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: `notification:${NID}` });
+    expect(next).not.toBe(prev);
+    const { ops } = diffToCloudOps(prev, next, maps());
+    const notifOps = ops.filter((o) => o.table === 'notifications');
+    expect(notifOps).toHaveLength(1);
+    expect(notifOps[0]).toMatchObject({ kind: 'update', match: { id: NID } });
+    expect(typeof (notifOps[0].row as { read_at?: unknown }).read_at).toBe('string');
+  });
 });
