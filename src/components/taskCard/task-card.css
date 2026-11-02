@@ -691,3 +691,29 @@
   margin: 0;
   max-width: 28ch;
 }
+
+/* Checklista: przycisk usuwania pozycji. Na urządzeniach z myszą zostaje
+   ukryty (opacity, nie display, więc dalej łapie fokus z Tab), a pokazuje się
+   po najechaniu na wiersz albo gdy fokus jest w wierszu. Na dotyku i
+   wskaźnikach zgrubnych jest widoczny cały czas. */
+.checklist-row .checklist-delete {
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--n2-transition), background var(--n2-transition),
+    color var(--n2-transition);
+}
+.checklist-row:hover .checklist-delete,
+.checklist-row:focus-within .checklist-delete,
+.checklist-row .checklist-delete:focus-visible {
+  opacity: 1;
+}
+@media (hover: none), (pointer: coarse) {
+  .checklist-row .checklist-delete {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .checklist-row .checklist-delete {
+    transition: none;
+  }
+}

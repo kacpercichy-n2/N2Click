@@ -53,6 +53,7 @@ import {
   Folder,
   Maximize2,
   Tag,
+  Trash2,
   Users,
 } from 'lucide-react';
 import { TaskConversationPane } from '../chat/ui/TaskConversationPane';
@@ -2487,14 +2488,15 @@ export function TaskEditor({
                     {item.text}
                   </label>
                   {!readOnly && (
-                    <button
-                      type="button"
-                      className="btn danger-ghost"
+                    <IconButton
+                      className="checklist-delete"
+                      variant="danger"
+                      size="sm"
+                      label={`Usuń pozycję: ${item.text}`}
+                      tooltip="Usuń pozycję"
+                      icon={<Trash2 size={14} aria-hidden />}
                       onClick={() => removeChecklistItem(item.id)}
-                      aria-label={`Usuń „${item.text}”`}
-                    >
-                      Usuń
-                    </button>
+                    />
                   )}
                 </li>
               ))}
