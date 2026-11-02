@@ -12,13 +12,13 @@
 //
 // Historia to dziennik aktywności zadania z istniejącego selektora
 // (`activityFor`), tylko do odczytu.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 // Ikony spoza kuratorowanego `components/icons.ts` (plik wspólny, poza L3).
 import { Bell, BellOff } from 'lucide-react';
 import { CommentsPanel } from '../../components/CommentsPanel';
 import { Tooltip } from '../../components/Tooltip';
 import { useStore } from '../../store/AppStore';
-import { activityFor, getPerson } from '../../store/selectors';
+import { activityFor, getPerson, taskConversationNotificationId } from '../../store/selectors';
 import { useOrgData } from '../../supabase/OrgDataProvider';
 import { formatTimestamp } from '../../utils/dates';
 import { useChat } from '../ChatProvider';
@@ -27,7 +27,12 @@ import { ChatAvatar } from './ChatAvatar';
 import { ChatThread } from './ChatThread';
 import { buildDirectory, personInitials, personLabel, type ChatPerson } from './chatPeople';
 import { commentCountLabel } from './chatThreadView';
-import { followersSummary, isCloudTaskId, visibleFollowers } from './taskConversationView';
+import {
+  followersSummary,
+  isCloudTaskId,
+  unreadTaskConversationNotifications,
+  visibleFollowers,
+} from './taskConversationView';
 import './chat-thread.css';
 
 export interface TaskConversationPaneProps {
@@ -61,11 +66,12 @@ type OpenState =
   | { status: 'opening' }
   | { status: 'ready'; conversationId: string }
   | { status: 'failed'; error: string }
+  | { status: 'forbidden'; error: string }
   | { status: 'unsaved' };
 
 function CloudTaskConversation({ taskId }: TaskConversationPaneProps) {
   const chat = useChat();
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const org = useOrgData();
   const [open, setOpen] = useState<OpenState>(() =>
     isCloudTaskId(taskId) ? { status: 'opening' } : { status: 'unsaved' },
@@ -106,11 +112,10 @@ function CloudTaskConversation({ taskId }: TaskConversationPaneProps) {
     setOpen({ status: 'opening' });
     void openTaskConversation(taskId).then((result) => {
       if (cancelled) return;
-      if (result.ok && result.conversationId) {
-        setOpen({ status: 'ready', conversationId: result.conversationId });
-      } else {
-        setOpen({ status: 'failed', error: result.ok ? 'Nie udało się otworzyć rozmowy.' : result.error });
-      }
+      if (result.ok) setOpen({ status: 'ready', conversationId: result.conversationId });
+      // Brak wglądu w zadanie: stan końcowy, bez przycisku ponowienia.
+      else if (result.forbidden) setOpen({ status: 'forbidden', error: result.error });
+      else setOpen({ status: 'failed', error: result.error });
     });
     return () => {
       cancelled = true;
@@ -135,6 +140,20 @@ function CloudTaskConversation({ taskId }: TaskConversationPaneProps) {
   const commentCount = thread.loaded ? commentCountLabel(thread.messages, thread.hasMore) : null;
   const titleId = `n2chat-task-title-${taskId}`;
   const panelId = `n2chat-task-panel-${taskId}`;
+
+  // Oglądana rozmowa gasi powiadomienia tego zadania (dzwonek, kafel Panelu).
+  // Każdy wpis wysyłamy najwyżej raz na montaż; reduktor i tak pomija przeczytane.
+  const markedRef = useRef<Set<string>>(new Set());
+  const notificationsRef = useRef(state.notifications);
+  notificationsRef.current = state.notifications;
+  const currentUserId = state.currentUserId;
+  const markNotificationsRead = useCallback((): void => {
+    for (const id of unreadTaskConversationNotifications(notificationsRef.current, taskId, currentUserId)) {
+      if (markedRef.current.has(id)) continue;
+      markedRef.current.add(id);
+      dispatch({ type: 'MARK_NOTIFICATION_ENTRY_READ', entryId: taskConversationNotificationId(id) });
+    }
+  }, [dispatch, taskId, currentUserId]);
 
   const toggleFollow = async (): Promise<void> => {
     if (!conversation || followBusy) return;
@@ -289,6 +308,10 @@ function CloudTaskConversation({ taskId }: TaskConversationPaneProps) {
           </div>
         ) : open.status === 'unsaved' ? (
           <p className="n2chat-task-empty">Rozmowa pojawi się po zapisaniu zadania.</p>
+        ) : open.status === 'forbidden' ? (
+          <p className="n2chat-task-empty" role="status">
+            {open.error}
+          </p>
         ) : open.status === 'failed' ? (
           <div className="n2chat-task-empty" role="alert">
             <p>{open.error}</p>
@@ -310,6 +333,7 @@ function CloudTaskConversation({ taskId }: TaskConversationPaneProps) {
             onDraftRestore={(failed) => setDraft((current) => (current ? `${failed}\n${current}` : failed))}
             placeholder="Napisz do zespołu przy tym zadaniu…"
             emptyText="Brak komentarzy. Napisz pierwszy, @ oznacza osobę."
+            onViewingNewest={markNotificationsRead}
           />
         )}
       </div>

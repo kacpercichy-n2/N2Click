@@ -26,3 +26,35 @@ export function followersSummary(directory: ChatDirectory, ids: readonly string[
   if (ids.length === 0) return 'Nikt nie obserwuje rozmowy';
   return `Obserwują: ${ids.map((id) => personLabel(directory, id)).join(', ')}`;
 }
+
+/** Minimalny kształt wiersza `notifications` potrzebny do gaszenia. */
+export interface TaskNotificationRow {
+  id: string;
+  recipientId: string;
+  type: string;
+  payload: { taskId?: string };
+  readAt: string;
+}
+
+/**
+ * Wiersze powiadomień rozmowy TEGO zadania (task_message / task_mention)
+ * zalogowanej osoby, jeszcze bez `read_at`. Panel oznacza je przeczytanymi,
+ * gdy użytkownik ogląda najnowszą wiadomość. Wpis przeczytany watermarkiem
+ * reduktor i tak pominie (ta sama referencja stanu).
+ */
+export function unreadTaskConversationNotifications(
+  notifications: readonly TaskNotificationRow[],
+  taskId: string,
+  recipientId: string,
+): string[] {
+  if (taskId === '' || recipientId === '') return [];
+  return notifications
+    .filter(
+      (n) =>
+        (n.type === 'task_message' || n.type === 'task_mention') &&
+        n.recipientId === recipientId &&
+        n.payload.taskId === taskId &&
+        n.readAt === '',
+    )
+    .map((n) => n.id);
+}

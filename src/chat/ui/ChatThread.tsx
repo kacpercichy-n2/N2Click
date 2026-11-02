@@ -73,8 +73,8 @@ import {
   EMPTY_THREAD,
   groupReactions,
   ownReaction,
-  pinnedMessages,
   seenByMessage,
+  threadPins,
   typingUserIds,
 } from '../chatState';
 import { CHAT_MESSAGE_MAX_LENGTH, CHAT_QUICK_REACTIONS, type ChatConversation } from '../types';
@@ -240,6 +240,12 @@ export interface ChatThreadProps {
   placeholder?: string;
   /** Tekst pustej rozmowy. */
   emptyText?: string;
+  /**
+   * Wołane, gdy użytkownik WIDZI najnowszą wiadomość: lista przewinięta do
+   * dołu, karta przeglądarki widoczna. Panel zadania gasi wtedy powiadomienia
+   * tej rozmowy. Wywołania mogą się powtarzać; odbiorca jest idempotentny.
+   */
+  onViewingNewest?: () => void;
 }
 
 export function ChatThread({
@@ -252,6 +258,7 @@ export function ChatThread({
   onDismiss,
   placeholder = 'Napisz wiadomość…',
   emptyText = 'Brak wiadomości. Napisz pierwszą.',
+  onViewingNewest,
 }: ChatThreadProps) {
   const chat = useChat();
   const conversationId = conversation.id;
@@ -306,7 +313,14 @@ export function ChatThread({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [chat.selfId],
   );
-  const queue = useAttachmentQueue(conversationId, storage.upload);
+  const queue = useAttachmentQueue(conversationId, storage.upload, storage.remove);
+  // Usunięcie OSTATNIEGO obrazu z tacy oddaje fokus polu treści (tacka znika,
+  // a fokus nie może zostać na odmontowanym przycisku).
+  const removeQueued = (id: string): void => {
+    const last = queue.pending.length === 1 && queue.pending[0]?.id === id;
+    queue.remove(id);
+    if (last) composerRef.current?.focus();
+  };
 
   useChatKeyboardInset(windowRef);
 
@@ -356,7 +370,7 @@ export function ChatThread({
     () => seenByMessage(messages, conversation.members, chat.selfId),
     [messages, conversation.members, chat.selfId],
   );
-  const pins = useMemo(() => pinnedMessages(messages), [messages]);
+  const pins = useMemo(() => threadPins(thread), [thread]);
   const typing = typingLabel(typingUserIds(thread.typing, Date.now()), directory);
   const canSend = editing
     ? editing.body.length <= CHAT_MESSAGE_MAX_LENGTH
@@ -403,6 +417,40 @@ export function ChatThread({
   }, [items]);
 
   useSharedBubbleGradient(listRef, [items, thread.reactions], !reduceMotion);
+
+  // „Widzi najnowszą”: przy dole listy, karta widoczna, pierwsza strona doszła.
+  const viewingRef = useRef(onViewingNewest);
+  viewingRef.current = onViewingNewest;
+  const loadedRef = useRef(thread.loaded);
+  loadedRef.current = thread.loaded;
+  const reportViewing = useCallback((): void => {
+    const box = listRef.current;
+    if (viewingRef.current === undefined || box === null || !loadedRef.current) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    // Ukryty panel (np. zakładka „Szczegóły” na telefonie) ma zerową wysokość
+    // i formalnie „jest przy dole”; tego nie liczymy jako oglądania.
+    if (box.clientHeight === 0) return;
+    if (isNearBottom(box)) viewingRef.current();
+  }, []);
+  useEffect(() => {
+    reportViewing();
+  }, [items, thread.loaded, reportViewing]);
+  const wantsViewing = onViewingNewest !== undefined;
+  useEffect(() => {
+    if (!wantsViewing) return;
+    const onVisible = (): void => reportViewing();
+    document.addEventListener('visibilitychange', onVisible);
+    // Panel odsłonięty przełącznikiem karty (wysokość 0 -> pełna) też liczy się
+    // jako wejście do rozmowy.
+    const box = listRef.current;
+    const observer =
+      box !== null && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onVisible) : null;
+    if (box !== null) observer?.observe(box);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      observer?.disconnect();
+    };
+  }, [wantsViewing, reportViewing]);
 
   const resizeComposer = (element: HTMLTextAreaElement): void => {
     element.style.height = 'auto';
@@ -861,6 +909,7 @@ export function ChatThread({
         onScroll={() => {
           const box = listRef.current;
           if (box !== null) stickRef.current = isNearBottom(box);
+          if (stickRef.current) reportViewing();
         }}
       >
         {thread.hasMore && (
@@ -1189,7 +1238,7 @@ export function ChatThread({
           <AttachmentTray
             pending={queue.pending}
             error={queue.error}
-            onRemove={queue.remove}
+            onRemove={removeQueued}
             onRetry={queue.retry}
           />
         )}

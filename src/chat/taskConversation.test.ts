@@ -21,11 +21,18 @@ import {
   seenByMessage,
   taskConversationUnread,
   updateThread,
+  applyLocalPin,
+  mergeThreadUpdate,
+  setThreadPinned,
+  threadPins,
 } from './chatState';
 import {
   deleteMessage,
   editMessage,
+  failureWithReason,
   loadMembers,
+  loadPinnedMessages,
+  messageRejectionReason,
   openTaskConversation,
   parseAttachments,
   sendMessage,
@@ -39,6 +46,7 @@ import {
 import { CHAT_MESSAGES, type ChatConversation, type ChatMessage } from './types';
 import { previewText } from './ui/chatDockView';
 import { buildDirectory } from './ui/chatPeople';
+import { unreadTaskConversationNotifications } from './ui/taskConversationView';
 
 const row = {
   id: 'm',
@@ -209,7 +217,14 @@ describe('operacje danych karty v2', () => {
     const denied = vi.fn(async () => ({ id: null, error: { code: '42501', message: 'forbidden' } }));
     expect(await openTaskConversation(db({ openTaskAtomic: denied }), 't')).toEqual({
       ok: false,
+      error: CHAT_MESSAGES.taskForbidden,
+      forbidden: true,
+    });
+    const broken = vi.fn(async () => ({ id: null, error: { code: 'P0001', message: 'x' } }));
+    expect(await openTaskConversation(db({ openTaskAtomic: broken }), 't')).toEqual({
+      ok: false,
       error: CHAT_MESSAGES.open,
+      forbidden: false,
     });
     expect((await openTaskConversation(db({}), 't')).ok).toBe(false);
     expect((await openTaskConversation(db({ openTaskAtomic }), '')).ok).toBe(false);
@@ -462,5 +477,116 @@ describe('odczyt i podgląd obrazów w doku', () => {
     expect(previewText(one, 'self', directory)).toBe('Obraz');
     const removed = { ...c, lastMessage: { ...c.lastMessage!, deletedAt: row.created_at } };
     expect(previewText(removed, 'self', directory)).toBe('Wiadomość usunięta');
+  });
+});
+
+describe('przypięte spoza strony, aktualizacje i powody odrzucenia', () => {
+  const T = (s: number) => `2026-11-02T10:00:${String(s).padStart(2, '0')}+00:00`;
+
+  it('pasek przypiętych obejmuje przypiętą wiadomość spoza wczytanej strony', () => {
+    const old = msg({ id: 'old', createdAt: T(1), pinnedAt: T(30), pinnedBy: 'a' });
+    const page = [msg({ id: 'p1', createdAt: T(10) }), msg({ id: 'p2', createdAt: T(11), pinnedAt: T(40), pinnedBy: 'b' })];
+    const thread = setThreadPinned({ ...EMPTY_THREAD, messages: page, hasMore: true, loaded: true }, [old, page[1]]);
+    expect(threadPins(thread).map((m) => m.id)).toEqual(['p2', 'old']);
+  });
+
+  it('nowsza rewizja ze strony wygrywa z listą przypiętych (odpięcie)', () => {
+    const pinned = msg({ id: 'p', pinnedAt: T(5), pinnedBy: 'a', editedAt: T(5) });
+    const unpinned = msg({ id: 'p', editedAt: T(9) });
+    const thread = setThreadPinned({ ...EMPTY_THREAD, messages: [unpinned] }, [pinned]);
+    expect(threadPins(thread)).toEqual([]);
+  });
+
+  it('UPDATE starszej niż okno wiadomości nie wchodzi do listy, tylko do przypiętych', () => {
+    const base = { ...EMPTY_THREAD, messages: [msg({ id: 'n', createdAt: T(20) })], hasMore: true, loaded: true };
+    const old = msg({ id: 'o', createdAt: T(1), pinnedAt: T(30), pinnedBy: 'a', editedAt: T(30) });
+    const next = mergeThreadUpdate(base, old);
+    expect(next.messages.map((m) => m.id)).toEqual(['n']);
+    expect(threadPins(next).map((m) => m.id)).toEqual(['o']);
+    // Edycja starej, nieprzypiętej wiadomości: nic się nie zmienia.
+    expect(mergeThreadUpdate(base, msg({ id: 'x', createdAt: T(2), editedAt: T(31) }))).toBe(base);
+    // W oknie (zgubiony INSERT) wiadomość wchodzi normalnie.
+    const late = mergeThreadUpdate(base, msg({ id: 'late', createdAt: T(25) }));
+    expect(late.messages.map((m) => m.id)).toEqual(['n', 'late']);
+  });
+
+  it('lokalne przypięcie po RPC ustępuje późniejszemu UPDATE z serwera', () => {
+    const base = { ...EMPTY_THREAD, messages: [msg({ id: 'm', editedAt: T(3) })] };
+    const pinned = applyLocalPin(base, 'm', T(50), 'self');
+    expect(threadPins(pinned).map((m) => m.id)).toEqual(['m']);
+    expect(applyLocalPin(pinned, 'm', T(51), 'self')).toBe(pinned);
+    const server = mergeThreadUpdate(pinned, msg({ id: 'm', editedAt: T(4), pinnedAt: T(4), pinnedBy: 'self' }));
+    expect(server.messages[0].pinnedAt).toBe(T(4));
+    const unpinned = applyLocalPin(server, 'm', null, null);
+    expect(threadPins(unpinned)).toEqual([]);
+  });
+
+  it('pobranie przypiętych odrzuca usunięte i nieprzypięte wiersze', async () => {
+    const selectPinned = vi.fn(async () => ({
+      rows: [
+        { ...row, id: 'a', pinned_at: T(5), pinned_by: 'a' },
+        { ...row, id: 'b', pinned_at: null },
+        { ...row, id: 'c', pinned_at: T(6), pinned_by: 'a', deleted_at: T(7) },
+      ],
+      error: null,
+    }));
+    const result = await loadPinnedMessages(db({ selectPinned }), 'c');
+    expect(result.ok && result.value.map((m) => m.id)).toEqual(['a']);
+    expect((await loadPinnedMessages(db({}), 'c')).ok).toBe(false);
+  });
+
+  it('mapuje 22023 i 23514 na powód po polsku', () => {
+    expect(messageRejectionReason({ code: '22023', message: 'chat: nieprawidłowe załączniki' })).toBe(
+      'najwyżej 10 obrazów w jednej wiadomości',
+    );
+    expect(messageRejectionReason({ code: '22023', message: 'chat: załącznik za duży' })).toBe('obraz jest za duży');
+    expect(
+      messageRejectionReason({ code: '22023', message: 'chat: odpowiedź musi dotyczyć wiadomości z tej samej rozmowy' }),
+    ).toBe('cytowana wiadomość jest z innej rozmowy');
+    expect(
+      messageRejectionReason({
+        code: '23514',
+        message: 'new row for relation "messages" violates check constraint "messages_body_check"',
+      }),
+    ).toBe('wiadomość jest pusta albo za długa');
+    expect(
+      messageRejectionReason({ code: '23514', message: 'violates check constraint "messages_mentions_shape"' }),
+    ).toBe('najwyżej 50 oznaczonych osób');
+    expect(messageRejectionReason({ code: '23514', message: 'other' })).toBeNull();
+    expect(failureWithReason(CHAT_MESSAGES.send, { code: '22023', message: 'chat: niedozwolony typ załącznika' })).toBe(
+      'Nie udało się wysłać wiadomości: nieobsługiwany typ obrazu.',
+    );
+    expect(failureWithReason(CHAT_MESSAGES.send, { code: null, message: 'x' })).toBe(CHAT_MESSAGES.send);
+  });
+
+  it('wysyłka odrzucona przez trigger pokazuje powód', async () => {
+    const insertMessage = vi.fn(async () => ({
+      row: null,
+      error: { code: '22023', message: 'chat: ścieżka załącznika spoza rozmowy' },
+    }));
+    expect(await sendMessage(db({ insertMessage }), 'c', 'a', 'Hej')).toEqual({
+      ok: false,
+      error: 'Nie udało się wysłać wiadomości: obraz nie przeszedł sprawdzenia, dodaj go jeszcze raz.',
+    });
+  });
+
+  it('wybiera nieprzeczytane powiadomienia rozmowy tylko tego zadania i tej osoby', () => {
+    const n = (id: string, patch: Partial<{ recipientId: string; type: string; taskId: string; readAt: string }>) => ({
+      id,
+      recipientId: patch.recipientId ?? 'me',
+      type: patch.type ?? 'task_message',
+      payload: { taskId: patch.taskId ?? 't1' },
+      readAt: patch.readAt ?? '',
+    });
+    const rows = [
+      n('a', {}),
+      n('b', { type: 'task_mention' }),
+      n('c', { taskId: 't2' }),
+      n('d', { recipientId: 'other' }),
+      n('e', { readAt: T(1) }),
+      n('f', { type: 'mention' }),
+    ];
+    expect(unreadTaskConversationNotifications(rows, 't1', 'me')).toEqual(['a', 'b']);
+    expect(unreadTaskConversationNotifications(rows, 't1', '')).toEqual([]);
   });
 });

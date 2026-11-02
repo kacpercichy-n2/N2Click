@@ -113,6 +113,7 @@ describe('applyIncomingMessage', () => {
       body: 'Cześć',
       kind: 'text', createdAt: T3,
       deletedAt: null,
+      attachmentsCount: 0,
     });
   });
 

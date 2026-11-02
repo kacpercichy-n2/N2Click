@@ -204,6 +204,7 @@ export const CHAT_MESSAGES = {
   messages: 'Nie udało się wczytać wiadomości.',
   send: 'Nie udało się wysłać wiadomości.',
   open: 'Nie udało się otworzyć rozmowy.',
+  taskForbidden: 'Brak dostępu do rozmowy tego zadania.',
   create: 'Nie udało się utworzyć grupy.',
   markRead: 'Nie udało się zapisać odczytu rozmowy.',
   react: 'Nie udało się zapisać reakcji.',

@@ -50,6 +50,7 @@ import {
   loadMessagesPage,
   loadMessagesSince,
   loadOverview,
+  loadPinnedMessages,
   loadReactions,
   markRead as markReadRow,
   openDirect as openDirectRow,
@@ -70,6 +71,7 @@ import {
   applyConversationTheme,
   applyFollowState,
   applyIncomingMessage,
+  applyLocalPin,
   applyMessageUpdate,
   applyReactionEvent,
   applyReadReceipt,
@@ -80,6 +82,7 @@ import {
   markConversationRead,
   mergeThreadMessages,
   mergeThreadReactions,
+  mergeThreadUpdate,
   newestMessageCursor,
   nextReactionIntent,
   patchThread,
@@ -87,6 +90,7 @@ import {
   readWatermark,
   removeTyping,
   retainThreads,
+  setThreadPinned,
   sortConversations,
   taskConversationUnread,
   totalUnread as sumUnread,
@@ -116,6 +120,11 @@ const EMPTY_THREADS: ChatThreadMap = {};
 export type ChatActionResult = { ok: true } | { ok: false; error: string };
 
 const OK: ChatActionResult = { ok: true };
+
+/** Otwarcie rozmowy zadania: id albo błąd; `forbidden` = brak wglądu (bez ponowień). */
+export type TaskConversationOpenAction =
+  | { ok: true; conversationId: string }
+  | { ok: false; error: string; forbidden: boolean };
 
 /** Reakcja w locie dla jednej wiadomości + ostatni zamiar czekający w kolejce. */
 interface PendingReaction {
@@ -153,7 +162,7 @@ export interface ChatContextValue {
    */
   attachConversation: (conversationId: string) => () => void;
   /** Otwiera (zakładając) rozmowę zadania; NIE rusza okna doku. */
-  openTaskConversation: (taskId: string) => Promise<ChatActionResult & { conversationId?: string }>;
+  openTaskConversation: (taskId: string) => Promise<TaskConversationOpenAction>;
   loadOlder: (conversationId: string) => void;
   sendMessage: (
     conversationId: string,
@@ -369,6 +378,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     async (conversationId: string, epoch: number): Promise<void> => {
       const db = dbRef.current;
       if (!db) return;
+      // Przypięte osobno (pasek „Przypięte” obejmuje też starsze strony).
+      // Błąd tego pobrania jest cichy: pasek pokaże przypięte z wczytanej strony.
+      void loadPinnedMessages(db, conversationId).then((pinned) => {
+        if (!pinned.ok || !threadAlive(conversationId, epoch)) return;
+        changeThread(conversationId, (t) => setThreadPinned(t, pinned.value));
+      });
       const result = await loadMessagesPage(db, conversationId, null);
       if (!threadAlive(conversationId, epoch)) return;
       if (!result.ok) {
@@ -516,7 +531,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      changeThread(message.conversationId, (t) => mergeThreadMessages(t, [message]));
+      changeThread(message.conversationId, (t) =>
+        event === 'UPDATE' ? mergeThreadUpdate(t, message) : mergeThreadMessages(t, [message]),
+      );
       if (event === 'INSERT' && visible && message.authorId !== self) {
         void markReadFor(message.conversationId, message.createdAt);
       }
@@ -844,11 +861,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openTaskConversation = useCallback(
-    async (taskId: string): Promise<ChatActionResult & { conversationId?: string }> => {
+    async (taskId: string): Promise<TaskConversationOpenAction> => {
       const db = dbRef.current;
-      if (!db) return { ok: false, error: CHAT_MESSAGES.open };
+      if (!db) return { ok: false, error: CHAT_MESSAGES.open, forbidden: false };
       const result = await openTaskRow(db, taskId);
-      if (!result.ok) return { ok: false, error: result.error };
+      if (!result.ok) return { ok: false, error: result.error, forbidden: result.forbidden };
       // Rozmowa (i nasze członkostwo) musi być na liście: tam żyje kanał,
       // licznik nieprzeczytanych i skład obserwujących.
       await refreshOverview();
@@ -1018,22 +1035,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const result = await setPinRow(db, messageId, pinned);
       if (!result.ok) return { ok: false, error: result.error };
       // RPC nie zwraca wiersza; prawdę (z nową rewizją) niesie broadcast UPDATE.
-      // Gdyby przepadł, dociągamy wątek jak po powrocie kanału.
-      const epoch = threadEpochRef.current.get(conversationId);
-      setTimeout(() => {
-        const thread = threadsRef.current[conversationId];
-        const message = thread?.messages.find((m) => m.id === messageId);
-        if (!message || epoch !== threadEpochRef.current.get(conversationId)) return;
-        if ((message.pinnedAt !== null) === pinned) return;
-        void (async () => {
-          const fresh = await loadMessagesPage(db, conversationId, null);
-          if (!fresh.ok || epoch === undefined || !threadAlive(conversationId, epoch)) return;
-          changeThread(conversationId, (t) => mergeThreadMessages(t, fresh.value.messages));
-        })();
-      }, 1500);
+      // Nanosimy zmianę od razu ze STARĄ rewizją: zgubiony broadcast nie
+      // zostawi paska w starym stanie, a prawdziwy UPDATE i tak wygra scalanie.
+      if (mountedRef.current) {
+        const self = selfIdRef.current;
+        changeThread(conversationId, (t) =>
+          applyLocalPin(t, messageId, pinned ? new Date().toISOString() : null, pinned ? self : null),
+        );
+      }
       return OK;
     },
-    [changeThread, threadAlive],
+    [changeThread],
   );
 
   const setFollow = useCallback(

@@ -72,6 +72,8 @@ export interface ChatDb {
   setPin?(messageId: string, pinned: boolean): Promise<{ error: ChatDbError | null }>;
   /** RPC `chat_set_follow`: obserwowanie rozmowy (muted_until null / infinity). */
   setFollow?(conversationId: string, follow: boolean): Promise<{ error: ChatDbError | null }>;
+  /** Przypięte, nieusunięte wiadomości rozmowy (indeks `messages_pinned`). */
+  selectPinned?(conversationId: string): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
   /** Członkowie jednej rozmowy z `muted_until` (overview tej kolumny nie niesie). */
   selectMembers?(conversationId: string): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
 
@@ -178,6 +180,22 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
         return { error: error ? toDbError(error, 'Błąd zapisu.') : null };
       } catch (e) {
         return { error: toDbError(e, 'Błąd zapisu.') };
+      }
+    },
+    async selectPinned(conversationId) {
+      try {
+        const { data, error } = await client
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .not('pinned_at', 'is', null)
+          .is('deleted_at', null)
+          .order('pinned_at', { ascending: false })
+          .limit(CHAT_PINNED_LIMIT);
+        if (error) return { rows: [], error: toDbError(error, 'Błąd zapytania.') };
+        return { rows: rows(data), error: null };
+      } catch (e) {
+        return { rows: [], error: toDbError(e, 'Błąd zapytania.') };
       }
     },
     async selectMembers(conversationId) {
@@ -777,7 +795,7 @@ export async function sendMessage(
     ...(mentions.length > 0 ? { mention_ids: mentions } : {}),
   };
   const { row: inserted, error } = await db.insertMessage(row);
-  if (error) return { ok: false, error: CHAT_MESSAGES.send };
+  if (error) return { ok: false, error: failureWithReason(CHAT_MESSAGES.send, error) };
   const message = toChatMessage(inserted);
   if (!message) return { ok: false, error: CHAT_MESSAGES.send };
   return { ok: true, value: message };
@@ -884,15 +902,75 @@ export async function loadMembers(
   return { ok: true, value: rows.map(toChatMember).filter((m): m is ChatMember => m !== null) };
 }
 
+/** Wynik otwarcia rozmowy zadania; `forbidden` = brak wglądu (bez ponowień). */
+export type TaskConversationOpenResult =
+  | { ok: true; value: string }
+  | { ok: false; error: string; forbidden: boolean };
+
 /** Otwiera (zakładając w razie potrzeby) rozmowę zadania i zwraca jej id. */
 export async function openTaskConversation(
   db: ChatDb,
   taskId: string,
-): Promise<ChatResult<string>> {
-  if (taskId === '' || !db.openTaskAtomic) return { ok: false, error: CHAT_MESSAGES.open };
+): Promise<TaskConversationOpenResult> {
+  if (taskId === '' || !db.openTaskAtomic) {
+    return { ok: false, error: CHAT_MESSAGES.open, forbidden: false };
+  }
   const result = await db.openTaskAtomic(taskId);
-  if (result.error || !result.id) return { ok: false, error: CHAT_MESSAGES.open };
+  if (result.error?.code === '42501') {
+    return { ok: false, error: CHAT_MESSAGES.taskForbidden, forbidden: true };
+  }
+  if (result.error || !result.id) return { ok: false, error: CHAT_MESSAGES.open, forbidden: false };
   return { ok: true, value: result.id };
+}
+
+/** Ile przypiętych pobiera pasek „Przypięte” jednym zapytaniem. */
+export const CHAT_PINNED_LIMIT = 50;
+
+/** Przypięte wiadomości rozmowy (najświeżej przypięta pierwsza). */
+export async function loadPinnedMessages(
+  db: ChatDb,
+  conversationId: string,
+): Promise<ChatResult<ChatMessage[]>> {
+  if (!db.selectPinned || conversationId === '') return { ok: false, error: CHAT_MESSAGES.messages };
+  const { rows, error } = await db.selectPinned(conversationId);
+  if (error) return { ok: false, error: CHAT_MESSAGES.messages };
+  return {
+    ok: true,
+    value: rows
+      .map(toChatMessage)
+      .filter((m): m is ChatMessage => m !== null && m.pinnedAt !== null && m.deletedAt === null),
+  };
+}
+
+/**
+ * Powód odrzucenia zapisu wiadomości po polsku albo null, gdy nieznany.
+ * `22023` niesie polski tekst z triggera walidacji L1 („chat: …”), `23514`
+ * nazwę naruszonego CHECK, `42501` utratę dostępu do rozmowy.
+ */
+export function messageRejectionReason(error: ChatDbError): string | null {
+  const text = error.message ?? '';
+  if (error.code === '22023') {
+    if (/odpowied/i.test(text)) return 'cytowana wiadomość jest z innej rozmowy';
+    if (/za duży/i.test(text)) return 'obraz jest za duży';
+    if (/typ załącznika/i.test(text)) return 'nieobsługiwany typ obrazu';
+    if (/nieprawidłowe załączniki/i.test(text)) return 'najwyżej 10 obrazów w jednej wiadomości';
+    if (/załącznik/i.test(text)) return 'obraz nie przeszedł sprawdzenia, dodaj go jeszcze raz';
+    return null;
+  }
+  if (error.code === '23514') {
+    if (text.includes('messages_attachments_shape')) return 'najwyżej 10 obrazów w jednej wiadomości';
+    if (text.includes('messages_mentions_shape')) return 'najwyżej 50 oznaczonych osób';
+    if (text.includes('messages_body_check')) return 'wiadomość jest pusta albo za długa';
+    return null;
+  }
+  if (error.code === '42501') return 'brak dostępu do tej rozmowy';
+  return null;
+}
+
+/** „Nie udało się wysłać wiadomości: powód.” albo sam komunikat bazowy. */
+export function failureWithReason(base: string, error: ChatDbError): string {
+  const reason = messageRejectionReason(error);
+  return reason === null ? base : `${base.replace(/\.$/, '')}: ${reason}.`;
 }
 
 /** Edycja treści WŁASNEJ wiadomości; `edited_at` stempluje serwer. */
@@ -929,7 +1007,7 @@ async function mutateMessage(
 ): Promise<ChatResult<ChatMessage>> {
   if (!db.updateMessage || messageId === '' || authorId === '') return { ok: false, error: failure };
   const result = await db.updateMessage(messageId, authorId, patch);
-  if (result.error) return { ok: false, error: failure };
+  if (result.error) return { ok: false, error: failureWithReason(failure, result.error) };
   const message = toChatMessage(result.row);
   return message ? { ok: true, value: message } : { ok: false, error: failure };
 }

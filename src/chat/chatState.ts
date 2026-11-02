@@ -678,6 +678,12 @@ export interface ChatThreadState {
   typing: ChatTypingEntry[];
   /** Polski komunikat nieudanego wczytania; null = w porządku. */
   error: string | null;
+  /**
+   * Przypięte wiadomości z OSOBNEGO pobrania (`pinned_at is not null`), także
+   * spoza wczytanej strony. Pasek „Przypięte” czyta `threadPins`, które scala
+   * tę listę z `messages` (nowsza rewizja wygrywa).
+   */
+  pinned: ChatMessage[];
 }
 
 export const EMPTY_THREAD: ChatThreadState = Object.freeze({
@@ -688,6 +694,7 @@ export const EMPTY_THREAD: ChatThreadState = Object.freeze({
   hasMore: false,
   typing: [],
   error: null,
+  pinned: [],
 }) as ChatThreadState;
 
 export type ChatThreadMap = Readonly<Record<string, ChatThreadState>>;
@@ -731,7 +738,76 @@ export function mergeThreadMessages(
   incoming: ChatMessage[],
 ): ChatThreadState {
   const messages = mergeMessages(thread.messages, incoming);
-  return messages === thread.messages ? thread : { ...thread, messages };
+  const pinned = mergePinned(thread.pinned ?? [], incoming);
+  if (messages === thread.messages && pinned === thread.pinned) return thread;
+  return { ...thread, messages, pinned };
+}
+
+/** Lista przypiętych: znane id i nowe przypięcia; reszta przychodzących odpada. */
+function mergePinned(pinned: ChatMessage[], incoming: readonly ChatMessage[]): ChatMessage[] {
+  const known = new Set(pinned.map((m) => m.id));
+  const relevant = incoming.filter((m) => known.has(m.id) || m.pinnedAt !== null);
+  return relevant.length === 0 ? pinned : mergeMessages(pinned, relevant);
+}
+
+/**
+ * Zdarzenie UPDATE (edycja, usunięcie, przypięcie). Wiadomość STARSZA niż
+ * wczytane okno (są jeszcze starsze strony) nie wchodzi do listy: wisiałaby nad
+ * dziurą, której `loadOlder` nie zasypie. Trafia tylko do listy przypiętych,
+ * jeśli jej dotyczy. Wiadomość nieznana, ale w oknie (zgubiony INSERT), wchodzi.
+ */
+export function mergeThreadUpdate(thread: ChatThreadState, message: ChatMessage): ChatThreadState {
+  const known = thread.messages.some((m) => m.id === message.id);
+  const oldest = thread.messages[0];
+  const beforeWindow =
+    !known && thread.hasMore && oldest !== undefined && compareMessages(message, oldest) < 0;
+  if (!beforeWindow) return mergeThreadMessages(thread, [message]);
+  const pinned = mergePinned(thread.pinned ?? [], [message]);
+  return pinned === thread.pinned ? thread : { ...thread, pinned };
+}
+
+/** Wynik osobnego pobrania przypiętych: zastępuje listę (prawda serwera). */
+export function setThreadPinned(thread: ChatThreadState, pinned: ChatMessage[]): ChatThreadState {
+  // Wariant już znany z wątku może być nowszy niż ten z pobrania.
+  const merged = pinned.map((p) => {
+    const local = thread.messages.find((m) => m.id === p.id);
+    return local ? (mergeMessages([p], [local])[0] ?? p) : p;
+  });
+  return { ...thread, pinned: merged };
+}
+
+/**
+ * Lokalne naniesienie przypięcia po udanym RPC (broadcast mógł przepaść).
+ * Rewizja (`editedAt`) zostaje stara, więc prawdziwy UPDATE z serwera i tak
+ * wygra przy scalaniu.
+ */
+export function applyLocalPin(
+  thread: ChatThreadState,
+  messageId: string,
+  pinnedAt: string | null,
+  pinnedBy: string | null,
+): ChatThreadState {
+  const patch = (m: ChatMessage): ChatMessage =>
+    m.id === messageId && m.deletedAt === null ? { ...m, pinnedAt, pinnedBy } : m;
+  const source =
+    thread.messages.find((m) => m.id === messageId) ??
+    (thread.pinned ?? []).find((m) => m.id === messageId);
+  if (!source || (source.pinnedAt !== null) === (pinnedAt !== null)) return thread;
+  const messages = thread.messages.map(patch);
+  const inPinned = (thread.pinned ?? []).some((m) => m.id === messageId);
+  const pinned = inPinned
+    ? (thread.pinned ?? []).map(patch)
+    : pinnedAt !== null
+      ? [...(thread.pinned ?? []), patch(source)]
+      : thread.pinned ?? [];
+  return { ...thread, messages, pinned };
+}
+
+/** Przypięte do paska: lista osobna scalona z wczytaną stroną. */
+export function threadPins(thread: ChatThreadState): ChatMessage[] {
+  const pinned = thread.pinned ?? [];
+  if (pinned.length === 0) return pinnedMessages(thread.messages);
+  return pinnedMessages(mergeMessages(pinned, thread.messages));
 }
 
 /** Scalenie autorytatywnych reakcji do wątku. */
