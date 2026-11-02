@@ -104,19 +104,19 @@ describe('saveErrorSummary', () => {
     expect(saveErrorSummary('Nie można zapisać zadania', [])).toBe('Nie można zapisać zadania.');
   });
 
-  it('jedno pole — liczba pojedyncza', () => {
+  it('jedno pole , liczba pojedyncza', () => {
     expect(saveErrorSummary('Nie można zapisać zadania', ['Tytuł'])).toBe(
-      'Nie można zapisać zadania — popraw 1 pole: Tytuł.',
+      'Nie można zapisać zadania. Popraw 1 pole: Tytuł.',
     );
   });
 
-  it('dwa pola — forma „pola”', () => {
+  it('dwa pola, forma „pola”', () => {
     expect(saveErrorSummary('Nie można zapisać zadania', ['Tytuł', 'Okres'])).toBe(
-      'Nie można zapisać zadania — popraw 2 pola: Tytuł, Okres.',
+      'Nie można zapisać zadania. Popraw 2 pola: Tytuł, Okres.',
     );
   });
 
-  it('pięć pól — forma „pól”', () => {
+  it('pięć pól, forma „pól”', () => {
     expect(
       saveErrorSummary('Nie można zapisać zadania', [
         'Tytuł',
@@ -125,18 +125,18 @@ describe('saveErrorSummary', () => {
         'Okres',
         'Osoby',
       ]),
-    ).toBe('Nie można zapisać zadania — popraw 5 pól: Tytuł, Projekt, Status, Okres, Osoby.');
+    ).toBe('Nie można zapisać zadania. Popraw 5 pól: Tytuł, Projekt, Status, Okres, Osoby.');
   });
 
   it('powtórzona etykieta liczy się raz (dwa błędy jednego pola)', () => {
     expect(saveErrorSummary('Nie można zapisać wydarzenia', ['Okres', 'Okres'])).toBe(
-      'Nie można zapisać wydarzenia — popraw 1 pole: Okres.',
+      'Nie można zapisać wydarzenia. Popraw 1 pole: Okres.',
     );
   });
 
   it('prefiks jest wstawiany dosłownie (zgłoszenie ma dwa warianty)', () => {
     expect(saveErrorSummary('Nie można wysłać zgłoszenia', ['Opis'])).toBe(
-      'Nie można wysłać zgłoszenia — popraw 1 pole: Opis.',
+      'Nie można wysłać zgłoszenia. Popraw 1 pole: Opis.',
     );
   });
 });

@@ -73,7 +73,7 @@ export function firstInvalidKey<K extends string>(
 
 /**
  * JEDNO liczone podsumowanie błędów zapisu na modal:
- * „Nie można zapisać zadania — popraw 2 pola: Tytuł, Okres.”
+ * „Nie można zapisać zadania. Popraw 2 pola: Tytuł, Okres.”
  * Bez etykiet zostaje samo zdanie („Nie można zapisać zadania.”), np. gdy
  * przyczyna nie ma pola (blokada `other`).
  */
@@ -81,5 +81,5 @@ export function saveErrorSummary(prefix: string, fieldLabels: string[]): string 
   const labels = [...new Set(fieldLabels)];
   const n = labels.length;
   if (n === 0) return `${prefix}.`;
-  return `${prefix} — popraw ${n} ${polishCount(n, 'pole', 'pola', 'pól')}: ${labels.join(', ')}.`;
+  return `${prefix}. Popraw ${n} ${polishCount(n, 'pole', 'pola', 'pól')}: ${labels.join(', ')}.`;
 }
