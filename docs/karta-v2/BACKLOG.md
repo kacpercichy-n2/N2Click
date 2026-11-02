@@ -9,3 +9,8 @@
    `recipientId` == `state.currentUserId` (id osoby lokalnej == id profilu).
 3. Do sprawdzenia w chmurze: zapytanie o przypięte (limit 50), komunikaty błędów z triggerów,
    ścieżka 42501 (brak dostępu).
+4. NIEZGODNOŚĆ F1/F2: baza (F1, w toku) wpuszcza broadcast klienta tylko jako `typing` na `chat:typing:<id>`;
+   klient (F2, 94b79ae) wysyła i słucha „pisze…” na `chat:conv:<id>` (ChatProvider.tsx:604). Po raporcie F1:
+   osobny prywatny kanał `chat:typing:<id>` w kliencie (wysyłka + odbiór), bramka bez zmian. Inny worker niż F2.
+5. Testy przeglądarkowe nadpisują śledzone zrzuty w `reviews/` (T1, L4). Przed scaleniem przywrócić
+   (`git checkout -- reviews/` przez koordynatora) albo przenieść wyjście skryptów do katalogu ignorowanego.
