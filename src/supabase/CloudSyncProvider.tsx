@@ -20,6 +20,7 @@ import {
 import { usePersistence, useStore, useStoreApi } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import { anyLiveSyncHold, shouldDeferBackgroundMerge } from '../utils/liveSyncGate';
+import { createLatestWins, liveSyncRouteFor } from './liveSyncRoute';
 import { reconnectDelayMs } from '../utils/liveChannel';
 import {
   clearCloudOutbox,
@@ -63,6 +64,10 @@ export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 // live (a nie przejściowy flap drop→rejoin). Krótki rejoin w tym oknie =
 // ciągłość, więc baner stale-hint nie miga przy cichym syncu.
 const LIVE_DROP_GRACE_MS = 5_000;
+
+// Debounce lekkiej synchronizacji powiadomień (zdarzenie z tabeli
+// `notifications`). Krótszy niż pełny (1200 ms): to jedno małe zapytanie.
+const NOTIFICATIONS_SYNC_DEBOUNCE_MS = 500;
 
 export interface CloudSyncValue {
   status: CloudSyncStatus;
@@ -211,6 +216,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   const pendingLiveSyncRef = useRef(false);
   const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveSyncRef = useRef<() => void>(() => {});
+  // Lekka ścieżka: zmiana wiersza `notifications` dociąga tylko powiadomienia
+  // (L1-DB-NOTES ryzyko 5). Osobny debounce; `notificationsLoadsRef` pilnuje,
+  // żeby starsza migawka (z pełnej hydracji albo lekkiej ścieżki) nie
+  // nadpisała nowszej, gdy obie ścieżki się przeplotą.
+  const notificationsSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationsSyncRef = useRef<() => void>(() => {});
+  const notificationsLoadsRef = useRef(createLatestWins());
   // Odświeżenie w tle omija krawędź statusu, więc dosynchronizowanie znacznika
   // wycofania wołamy przez ref (wzorzec jak liveSyncRef — definicja niżej).
   const syncRetirementRef = useRef<() => void>(() => {});
@@ -504,8 +516,14 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // (podmiana autorytatywna). Błąd PRZEJŚCIOWY => `available: false`:
         // NIE dispatchujemy scalenia, zostawiamy poprzedni stan (panel nie miga
         // pustką na chwilowym błędzie sieci).
+        const notifTicket = notificationsLoadsRef.current.begin();
         const notifResult = await loadNotificationsSnapshot(getDb(), maps);
-        if (mountedRef.current && notifResult.available) {
+        // `claim` na końcu: tylko gdy wynik naprawdę scalamy.
+        if (
+          mountedRef.current &&
+          notifResult.available &&
+          notificationsLoadsRef.current.claim(notifTicket)
+        ) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_NOTIFICATIONS',
@@ -604,6 +622,60 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   }, [performLiveSync]);
   liveSyncRef.current = scheduleLiveSync;
 
+  // Lekka synchronizacja powiadomień (zdarzenie z tabeli `notifications`).
+  // Te same bramki co pełna ścieżka, plus: gdy pełna synchronizacja jest już
+  // zaplanowana albo odroczona, nic nie robimy (ona i tak wczyta powiadomienia
+  // PÓŹNIEJ niż to zdarzenie). Stan inny niż 'ready' albo brak map => oddajemy
+  // zdarzenie pełnej ścieżce, która umie czekać na hydrację.
+  const performNotificationsSync = useCallback(async () => {
+    if (!mountedRef.current || !active) return;
+    if (liveSyncTimerRef.current !== null || pendingLiveSyncRef.current) return;
+    const maps = mapsRef.current;
+    if (statusRef.current !== 'ready' || maps === null) {
+      liveSyncRef.current();
+      return;
+    }
+    if (backgroundMergeDeferred()) {
+      notificationsSyncRef.current();
+      return;
+    }
+    const owner = userIdRef.current;
+    const epoch = sessionEpochRef.current;
+    const ticket = notificationsLoadsRef.current.begin();
+    const result = await loadNotificationsSnapshot(getDb(), maps);
+    if (!mountedRef.current || !result.available) return;
+    // Zmiana konta / wylogowanie / hydracja startowa w trakcie fetchu: wynik
+    // należy do świata, którego już nie ma. Przeplot z pełną hydracją w tle
+    // rozstrzyga `claim` (nowsze pobranie wygrywa).
+    if (
+      userIdRef.current !== owner ||
+      sessionEpochRef.current !== epoch ||
+      statusRef.current !== 'ready'
+    ) {
+      return;
+    }
+    // Ta sama bramka co przed scaleniem w tle w runHydration (po `await`).
+    if (backgroundMergeDeferred()) {
+      notificationsSyncRef.current();
+      return;
+    }
+    if (!notificationsLoadsRef.current.claim(ticket)) return;
+    // Jak `advanceDiffBase` w runHydration: scalenie jest w SUPPRESSED, a bazę
+    // diffa przesuwamy tylko, gdy nic niezmirrorowanego nie wisiało.
+    const before = getState();
+    dispatch({ type: 'MERGE_CLOUD_NOTIFICATIONS', payload: { notifications: result.notifications } });
+    if (prevRef.current === before) prevRef.current = getState();
+  }, [active, backgroundMergeDeferred, getDb, getState, dispatch]);
+
+  const scheduleNotificationsSync = useCallback(() => {
+    if (notificationsSyncTimerRef.current !== null) clearTimeout(notificationsSyncTimerRef.current);
+    notificationsSyncTimerRef.current = setTimeout(() => {
+      notificationsSyncTimerRef.current = null;
+      void performNotificationsSync();
+    }, NOTIFICATIONS_SYNC_DEBOUNCE_MS);
+  }, [performNotificationsSync]);
+  notificationsSyncRef.current = scheduleNotificationsSync;
+
   // Subskrypcja Realtime: jedno źródło zdarzeń postgres_changes dla wszystkich
   // opublikowanych tabel (publikacja supabase_realtime; RLS obowiązuje).
   // Zdarzenie => zaplanuj pełną synchronizację (debounce zlewa serie zmian).
@@ -655,8 +727,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       if (disposed) return;
       const channel = client
         .channel(`planner-live-${userId}`)
-        .on('postgres_changes', { event: '*', schema: 'n2click' }, () => {
-          liveSyncRef.current();
+        .on('postgres_changes', { event: '*', schema: 'n2click' }, (change: unknown) => {
+          // Wiersz powiadomienia: tylko powiadomienia; reszta: pełna synchronizacja.
+          if (liveSyncRouteFor(change) === 'notifications') notificationsSyncRef.current();
+          else liveSyncRef.current();
         })
         // Tożsamość (profiles/companies) żyje w schemacie `core` — publikacja
         // realtime wskazuje tabele bazowe, nie widoki-mostki, więc bez tego
@@ -696,6 +770,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       if (liveSyncTimerRef.current !== null) {
         clearTimeout(liveSyncTimerRef.current);
         liveSyncTimerRef.current = null;
+      }
+      if (notificationsSyncTimerRef.current !== null) {
+        clearTimeout(notificationsSyncTimerRef.current);
+        notificationsSyncTimerRef.current = null;
       }
       if (current) void client.removeChannel(current);
     };
