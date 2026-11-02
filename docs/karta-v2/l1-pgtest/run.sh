@@ -15,9 +15,13 @@ trap cleanup EXIT INT TERM
 $PG/initdb -D $DATA -U postgres -A trust >/dev/null
 $PG/pg_ctl -D $DATA -o "-p $PORT -k /tmp -c listen_addresses=''" -l $DATA/log -w start >/dev/null
 PSQL=($PG/psql -h /tmp -p $PORT -U postgres -d postgres -X -q -t -v ON_ERROR_STOP=1)
+# Pliki migracji idą jako jedna transakcja (-1), jak w apply_migration / db push
+# (inaczej `set local lock_timeout` nie działa). Pliki testowe bez -1.
 run() {
   echo "== ${1:t}"
-  if ! $PSQL -f $1 > $DATA/out 2>&1; then cat $DATA/out; echo "FAILED in ${1:t}"; exit 1; fi
+  local single=()
+  [[ $1 == $MIG/* ]] && single=(-1)
+  if ! $PSQL $single -f $1 > $DATA/out 2>&1; then cat $DATA/out; echo "FAILED in ${1:t}"; exit 1; fi
   grep -c 'NOTICE:  ok' $DATA/out | sed 's/^/   asercje ok: /'
   grep -v -e '^NOTICE:  ok' -e '^psql:.*NOTICE:  ok' -e '^ *$' -e 'skipping$' -e '^ [0-9a-f-]{36}$' $DATA/out || true
 }
@@ -37,4 +41,15 @@ run $MIG/20261102101000_task_chat_storage.sql
 run $MIG/20261102102000_task_chat_backfill.sql
 run $MIG/20261102103000_task_chat_notifications.sql
 run $HERE/rerun-checks.sql
+# R1 finding 2: pomiar RLS na 20 tys. wiadomości.
+run $HERE/timing.sql
+# R1 finding 5: zajęte id komentarza = import pada z błędem (cała transakcja cofnięta).
+run $HERE/squat-setup.sql
+echo "== 20261102102000_task_chat_backfill.sql (oczekiwany błąd)"
+if $PSQL -1 -f $MIG/20261102102000_task_chat_backfill.sql > $DATA/out 2>&1; then
+  cat $DATA/out; echo "FAILED: backfill przeszedł mimo zajętego id"; exit 1
+fi
+if ! grep -q 'id komentarza zajęte' $DATA/out; then cat $DATA/out; echo "FAILED: inny błąd niż zajęte id"; exit 1; fi
+echo "   asercje ok: 1 (import padł: id komentarza zajęte)"
+run $HERE/squat-after.sql
 echo "ALL GREEN"

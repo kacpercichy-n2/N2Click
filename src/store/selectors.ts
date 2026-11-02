@@ -40,6 +40,7 @@ import { addDaysStr, isBirthdayOn, isValidDateStr, parseDate } from '../utils/da
 import { expandOccurrences, type RecurrenceOccurrence } from '../utils/recurrence';
 import { personalTimeFor } from '../utils/eventPersonalTime';
 import { isLeaveKind } from '../utils/leave';
+import { notificationMessageCount, taskConversationNotificationTitle } from '../utils/notifications';
 import { argsKey, createKeyedCache, createRefCache, filterKey } from './selectorCache';
 import {
   canViewProjectContent,
@@ -2425,6 +2426,10 @@ export function notificationsForPerson(
   //    (stabilne między urządzeniami); przeczytane jak wyżej (watermark albo
   //    zbiór id) albo po `read_at` wiersza. Zadanie spoza stanu (brak wglądu,
   //    usunięte) => wiersz pominięty. Nieznany aktor => „Ktoś”, actorId ''.
+  //    task_message jest ZBIORCZY: jeden nieprzeczytany na rozmowę, baza
+  //    podbija w nim `count`, ostatniego aktora i `created_at`. Wiersz oznaczony
+  //    tutaj (zbiór id albo watermark) baza zamyka przy następnej wiadomości i
+  //    zakłada nowy, więc ten sam id nie wraca jako nowa treść.
   for (const n of state.notifications) {
     if (n.type !== 'task_message' && n.type !== 'task_mention') continue;
     if (n.recipientId !== personId || !withinWindow(n.createdAt)) continue;
@@ -2432,9 +2437,9 @@ export function notificationsForPerson(
     if (!task) continue;
     const actorId = n.payload.actorId ?? '';
     if (actorId === personId) continue;
-    const actorName = (actorId !== '' ? getPerson(state, actorId)?.name : undefined) ?? 'Ktoś';
+    const knownActor = actorId !== '' ? getPerson(state, actorId)?.name ?? '' : '';
+    const actorName = knownActor || 'Ktoś';
     const id = taskConversationNotificationId(n.id);
-    const verb = n.type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)';
     out.push({
       id,
       kind: n.type === 'task_mention' ? 'mention' : 'task_message',
@@ -2443,7 +2448,12 @@ export function notificationsForPerson(
       entityType: 'task',
       entityId: task.id,
       taskId: task.id,
-      title: `${actorName} ${verb} w zadaniu: ${taskDisplayTitle(state, task)}`,
+      title: taskConversationNotificationTitle(
+        n.type,
+        knownActor,
+        taskDisplayTitle(state, task),
+        notificationMessageCount(n.payload),
+      ),
       createdAt: n.createdAt,
       read: n.readAt !== '' || isRead(n.createdAt, id),
     });

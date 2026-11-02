@@ -28,7 +28,25 @@
 -- Konwencja domu jak w 20260813180000_chat: pełna kwalifikacja nazw,
 -- idempotentnie, funkcje z `set search_path = ''`, polityki `to authenticated`.
 -- Bez jawnego begin/commit (narzędzie aplikujące owija plik w transakcję).
+--
+-- Poprawki po przeglądzie R1 (docs/karta-v2/R1-SECURITY-REVIEW.md), F1:
+--   * lock_timeout 5 s (ALTER TABLE i polityki biorą ACCESS EXCLUSIVE),
+--   * SELECT wiadomości i reakcji liczy członkostwo RAZ na zapytanie
+--     (app.chat_my_conversation_ids), nie per wiersz,
+--   * zwykły INSERT rozmowy nie ustawia kontekstu wcale (rozmowy z kontekstem
+--     tylko przez definery, dziś chat_open_task),
+--   * walidacja treści najpierw sprawdza członkostwo (brak wyroczni reply_to),
+--   * wzmianki: tylko osoby nazwane w treści jako @Imię, w rozmowie zadania
+--     tylko z wglądem w zadanie, max 20,
+--   * `revised_at`: rewizja do scalania zdarzeń (edycja, pin, odpin,
+--     kasowanie); `edited_at` zmienia się wyłącznie ze zmianą `body`,
+--   * kanał `chat:conv:<id>` tylko dla zdarzeń serwera; klient nadaje
+--     wyłącznie „pisze…” na `chat:typing:<id>` i presence na `chat:presence`.
 -- =============================================================================
+
+-- Przy kolejce za długim odczytem lepiej przerwać i powtórzyć, niż trzymać
+-- w kolejce wszystkie odczyty czatu za ACCESS EXCLUSIVE.
+set local lock_timeout = '5s';
 
 -- -----------------------------------------------------------------------------
 -- 1. Kolumny i ograniczenia `messages`
@@ -38,7 +56,8 @@ alter table n2click.messages
   add column if not exists attachments jsonb not null default '[]'::jsonb,
   add column if not exists mention_ids uuid[] not null default '{}'::uuid[],
   add column if not exists pinned_at timestamptz,
-  add column if not exists pinned_by uuid references core.profiles(id) on delete set null;
+  add column if not exists pinned_by uuid references core.profiles(id) on delete set null,
+  add column if not exists revised_at timestamptz;
 
 comment on column n2click.messages.attachments is
   'Obrazy wiadomości: tablica (max 10) obiektów {path, mime, width, height, size, name}. path = <conversation_id>/<uuid>.<ext> w buckecie chat-attachments. Walidacja: trigger chat_messages_validate_content.';
@@ -46,6 +65,27 @@ comment on column n2click.messages.mention_ids is
   'Id profili wspomnianych w treści (parsowane w kliencie). Wspomniany z wglądem w zadanie zostaje obserwującym rozmowy zadania i dostaje task_mention.';
 comment on column n2click.messages.pinned_at is
   'Przypięcie wiadomości (NULL = nieprzypięta). Zapis wyłącznie przez RPC chat_set_pin.';
+comment on column n2click.messages.revised_at is
+  'Rewizja wiersza do scalania stron i broadcastów: przy INSERT = created_at, każda edycja treści, pin, odpin i kasowanie podbija ją monotonicznie. edited_at zmienia się tylko ze zmianą body (etykieta „(edytowana)”).';
+
+-- Rewizja dla wierszy sprzed migracji: najpóźniejszy znany stempel. UPDATE bez
+-- triggerów (inaczej każdy wiersz poszedłby broadcastem UPDATE i dostał nową
+-- rewizję). ALTER TABLE wyżej trzyma już ACCESS EXCLUSIVE, więc wyłączenie
+-- triggerów nic nie zmienia dla równoległych sesji; błąd cofa całą transakcję.
+do $$
+begin
+  if exists (select 1 from n2click.messages where revised_at is null) then
+    alter table n2click.messages disable trigger chat_messages_stamp_edit;
+    alter table n2click.messages disable trigger chat_messages_broadcast;
+    update n2click.messages
+    set revised_at = greatest(created_at, coalesce(edited_at, created_at), coalesce(deleted_at, created_at))
+    where revised_at is null;
+    alter table n2click.messages enable trigger chat_messages_stamp_edit;
+    alter table n2click.messages enable trigger chat_messages_broadcast;
+  end if;
+end;
+$$;
+alter table n2click.messages alter column revised_at set not null;
 
 -- Treść: pusta dozwolona tylko z załącznikiem. Nazwa `messages_body_check`
 -- to nazwa nadana przez Postgresa inline CHECK z 20260813180000_chat.
@@ -60,11 +100,12 @@ alter table n2click.messages add constraint messages_attachments_shape check (
   jsonb_typeof(attachments) = 'array' and jsonb_array_length(attachments) <= 10
 );
 
--- Wzmianki: bez NULL-i i z limitem (50 osób), żeby jedną wiadomością nie dało
--- się zalać powiadomieniami całej firmy.
+-- Wzmianki: bez NULL-i i z limitem (20 osób), żeby jedną wiadomością nie dało
+-- się zalać powiadomieniami całej firmy. Trigger walidacji i tak zostawia
+-- tylko osoby nazwane w treści (R1 finding 7).
 alter table n2click.messages drop constraint if exists messages_mentions_shape;
 alter table n2click.messages add constraint messages_mentions_shape check (
-  cardinality(mention_ids) <= 50 and array_position(mention_ids, null) is null
+  cardinality(mention_ids) <= 20 and array_position(mention_ids, null) is null
 );
 
 alter table n2click.messages drop constraint if exists messages_pin_pair;
@@ -203,6 +244,34 @@ as $$
     );
 $$;
 
+-- Zbiór rozmów zalogowanego, liczony RAZ na zapytanie (R1 finding 2).
+-- Polityki SELECT wiadomości i reakcji pytają `conversation_id in (select ...)`,
+-- więc planer liczy zbiór raz (hashed subplan) zamiast odpalać
+-- is_conversation_member + chat_can_read_task dla każdego wiersza.
+-- Ta sama reguła co is_conversation_member (członek + dla zadania bieżący
+-- wgląd); is_conversation_member zostaje dla sprawdzeń jednego wiersza
+-- (INSERT/UPDATE, RPC, topic, Storage).
+create or replace function app.chat_my_conversation_ids()
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select m.conversation_id
+  from n2click.conversation_members m
+  join n2click.conversations c on c.id = m.conversation_id
+  where m.user_id = (select auth.uid())
+    and coalesce((select core.has_app('n2click')), false)
+    and (c.context_type is distinct from 'task' or app.chat_can_read_task(c.context_id));
+$$;
+
+comment on function app.chat_my_conversation_ids() is
+  'Rozmowy zalogowanego (członek + dla rozmowy zadania bieżący wgląd). Dla polityk SELECT wielu wierszy: liczone raz na zapytanie.';
+
+revoke all on function app.chat_my_conversation_ids() from public, anon;
+grant execute on function app.chat_my_conversation_ids() to authenticated, service_role;
+
 revoke all on function app.chat_can_read_task(uuid) from public, anon, authenticated;
 revoke all on function app.chat_user_can_read_task(uuid, uuid) from public, anon, authenticated;
 revoke all on function app.chat_is_task_conversation(uuid) from public, anon;
@@ -230,13 +299,37 @@ create policy "chat_conversations_select" on n2click.conversations
     )
   );
 
+-- Zwykły INSERT nie ustawia kontekstu WCALE (R1 finding 3): unikalny indeks
+-- kontekstu inaczej pozwalałby zarezerwować tożsamość cudzego projektu albo
+-- klienta i odpytać jej istnienie przez 23505. Rozmowy z kontekstem powstają
+-- tylko w definerach z własną autoryzacją (dziś chat_open_task).
 drop policy if exists "chat_conversations_insert" on n2click.conversations;
 create policy "chat_conversations_insert" on n2click.conversations
   for insert to authenticated
   with check (
     (select core.has_app('n2click'))
     and created_by = (select auth.uid())
-    and context_type is distinct from 'task'
+    and context_type is null
+    and context_id is null
+  );
+
+-- SELECT wielu wierszy: członkostwo raz na zapytanie (R1 finding 2).
+-- Pomiar na 20 tys. wiadomości: 2,5 s -> kilka ms (scenariusz czasowy w
+-- docs/karta-v2/l1-pgtest/timing.sql).
+drop policy if exists "chat_messages_select" on n2click.messages;
+create policy "chat_messages_select" on n2click.messages
+  for select to authenticated
+  using (
+    (select core.has_app('n2click'))
+    and conversation_id in (select app.chat_my_conversation_ids())
+  );
+
+drop policy if exists "chat_message_reactions_select" on n2click.message_reactions;
+create policy "chat_message_reactions_select" on n2click.message_reactions
+  for select to authenticated
+  using (
+    (select core.has_app('n2click'))
+    and conversation_id in (select app.chat_my_conversation_ids())
   );
 
 drop policy if exists "chat_conversation_members_insert" on n2click.conversation_members;
@@ -283,17 +376,48 @@ declare
   v_path text;
   v_mime text;
   v_ext text;
+  v_task uuid;
 begin
+  -- Najpierw członkostwo (R1 finding 6): BEFORE trigger odpala się przed
+  -- WITH CHECK polityki, więc bez tego błąd reply_to (22023) mówiłby
+  -- nie-członkowi, do której rozmowy należy wiadomość. Ścieżki serwera bez
+  -- JWT (import, service_role) pomijają ten krok.
+  if (select auth.uid()) is not null
+     and not app.is_conversation_member(new.conversation_id) then
+    raise exception 'forbidden' using errcode = '42501';
+  end if;
+
   -- Przypięcie rodzi się wyłącznie przez chat_set_pin.
   new.pinned_at := null;
   new.pinned_by := null;
 
-  -- Wzmianki: deduplikacja, autor nie wspomina sam siebie.
+  -- Rewizja startuje od created_at (stemplowanego już przez
+  -- chat_messages_stamp_insert, który sortuje się wcześniej).
+  new.revised_at := new.created_at;
+
+  select c.context_id into v_task
+  from n2click.conversations c
+  where c.id = new.conversation_id and c.context_type = 'task';
+
+  -- Wzmianki (R1 finding 7): deduplikacja, bez autora, tylko osoby nazwane
+  -- w treści jako @Imię (ta sama reguła granic słowa co parseChatMentions
+  -- w kliencie, bez rozróżniania wielkości liter), a w rozmowie zadania tylko
+  -- osoby z wglądem w zadanie. Reszta odpada po cichu (np. imię zmienione
+  -- między napisaniem a wysłaniem). Limit 20 pilnuje CHECK messages_mentions_shape.
   new.mention_ids := coalesce(
     (
-      select array_agg(distinct u)
+      select array_agg(distinct u order by u)
       from unnest(new.mention_ids) as u
-      where u is not null and u <> new.author_id
+      join core.profiles p on p.id = u
+      where u is not null
+        and u <> new.author_id
+        and coalesce(btrim(p.first_name), '') <> ''
+        and new.body ~* (
+          '(^|[^[:alnum:]@])@'
+          || regexp_replace(btrim(p.first_name), '([][(){}.*+?^$|\\-])', '\\\1', 'g')
+          || '($|[^[:alnum:]])'
+        )
+        and (v_task is null or app.chat_user_can_read_task(u, v_task))
     ),
     '{}'::uuid[]
   );
@@ -374,12 +498,15 @@ create trigger chat_messages_validate_content
   for each row execute function n2click.chat_validate_message_content();
 
 -- -----------------------------------------------------------------------------
--- 6. Rewizja: przypięcie i odpięcie też podbijają `edited_at`
+-- 6. Rewizja wiersza: `revised_at` (scalanie) osobno od `edited_at` (etykieta)
 --
--- Klient scala strony i broadcasty po `edited_at` (kontrakt L3,
--- docs/karta-v2/L3-NEEDS-FROM-L1.md); UPDATE z tą samą rewizją jest
--- odrzucany, więc pin bez podbicia nie dotarłby na żywo. Kasowanie miękkie
--- zdejmuje przypięcie (skasowana wiadomość nie wisi w „Przypięte”).
+-- Klient scala strony i broadcasty po `revised_at` (kontrakt
+-- docs/karta-v2/L1-L3-CONTRACT.md): UPDATE z rewizją nie nowszą niż znana jest
+-- odrzucany. Edycja treści, pin, odpin i kasowanie miękkie podbijają
+-- `revised_at` monotonicznie. `edited_at` zmienia się WYŁĄCZNIE ze zmianą
+-- `body`, więc przypięcie nie pokazuje już „(edytowana)” (BACKLOG 1).
+-- Kasowanie miękkie jest terminalne i zdejmuje przypięcie.
+-- Klient nie ma grantu UPDATE na revised_at; trigger i tak nadpisuje wartość.
 -- -----------------------------------------------------------------------------
 
 create or replace function n2click.chat_stamp_message_edit()
@@ -397,8 +524,7 @@ begin
     new.pinned_by := null;
   end if;
 
-  if new.body is distinct from old.body
-     or new.pinned_at is distinct from old.pinned_at then
+  if new.body is distinct from old.body then
     new.edited_at := greatest(
       clock_timestamp(),
       old.edited_at + interval '1 microsecond',
@@ -406,6 +532,19 @@ begin
     );
   else
     new.edited_at := old.edited_at;
+  end if;
+
+  if new.body is distinct from old.body
+     or new.pinned_at is distinct from old.pinned_at
+     or new.deleted_at is distinct from old.deleted_at then
+    new.revised_at := greatest(
+      clock_timestamp(),
+      old.revised_at + interval '1 microsecond',
+      new.edited_at + interval '1 microsecond',
+      old.created_at + interval '1 microsecond'
+    );
+  else
+    new.revised_at := old.revised_at;
   end if;
 
   return new;
@@ -638,7 +777,7 @@ end;
 $$;
 
 comment on function n2click.chat_set_pin(uuid, boolean) is
-  'Przypina/odpina wiadomość (każdy członek rozmowy). Podbija edited_at i nadaje UPDATE na chat:conv:<id> jak edycja.';
+  'Przypina/odpina wiadomość (każdy członek rozmowy). Podbija revised_at (nie edited_at) i nadaje UPDATE na chat:conv:<id> jak edycja.';
 
 revoke all on function n2click.chat_set_pin(uuid, boolean) from public, anon;
 grant execute on function n2click.chat_set_pin(uuid, boolean) to authenticated, service_role;
@@ -765,6 +904,106 @@ comment on function n2click.chat_overview() is
 
 revoke all on function n2click.chat_overview() from public, anon;
 grant execute on function n2click.chat_overview() to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- 13. Kanały Realtime: klient nie nadaje zdarzeń na `chat:conv:<id>`
+--     (R1 finding 1, połowa bazy)
+--
+-- Hostowany Realtime sprawdza prawo zapisu RAZ, przy dołączeniu do kanału:
+-- wstawia próbny wiersz `realtime.messages` z samym `topic` i `extension`
+-- (bez `event`) i zapamiętuje wynik do końca połączenia. Polityka nie może
+-- więc wpuścić „typing” i zatrzymać „INSERT”/„read” na TYM SAMYM topicu.
+-- Rozdzielamy topiki:
+--   * `chat:conv:<id>`: zdarzenia tylko z serwera (INSERT/UPDATE wiadomości
+--     z triggera, `read`, `reaction`, `theme_changed` z definerów przez
+--     realtime.send / broadcast_changes, które omijają RLS). Klient tylko słucha.
+--   * `chat:typing:<id>`: jedyny broadcast z klienta, event `typing`
+--     z `{ userId }`; ten sam warunek członkostwa co rozmowa.
+--   * `chat:presence`: tylko presence (track), bez broadcastu.
+--   * `chat:user:<id>`: tylko słuchanie (INSERT/DELETE członkostwa z triggera).
+-- Podrobione „pisze…” na `chat:typing` pokazuje najwyżej fałszywy wskaźnik
+-- pisania w rozmowie, do której nadawca i tak należy.
+-- -----------------------------------------------------------------------------
+
+create or replace function app.chat_topic_member(topic text)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_conversation uuid;
+  v_user uuid;
+begin
+  if topic is null then
+    return false;
+  end if;
+
+  -- Presence („kto online”) jest wspólny dla całej appki.
+  if topic = 'chat:presence' then
+    return coalesce((select core.has_app('n2click')), false);
+  end if;
+
+  if topic like 'chat:conv:%' then
+    begin
+      -- 'chat:conv:' ma 10 znaków, uuid zaczyna się na pozycji 11.
+      v_conversation := substring(topic from 11)::uuid;
+    exception
+      when others then
+        return false; -- zły uuid w topicu = brak dostępu, NIGDY wyjątek
+    end;
+    return app.is_conversation_member(v_conversation);
+  end if;
+
+  if topic like 'chat:typing:%' then
+    begin
+      -- 'chat:typing:' ma 12 znaków.
+      v_conversation := substring(topic from 13)::uuid;
+    exception
+      when others then
+        return false;
+    end;
+    return app.is_conversation_member(v_conversation);
+  end if;
+
+  -- Kanał osobisty zaproszeń: słucha go WYŁĄCZNIE właściciel uuid.
+  if topic like 'chat:user:%' then
+    begin
+      v_user := substring(topic from 11)::uuid;
+    exception
+      when others then
+        return false;
+    end;
+    return v_user = (select auth.uid())
+      and coalesce((select core.has_app('n2click')), false);
+  end if;
+
+  return false;
+end;
+$$;
+
+revoke all on function app.chat_topic_member(text) from public, anon;
+grant execute on function app.chat_topic_member(text) to authenticated;
+
+-- SELECT (odbiór) bez zmian: broadcast i presence każdego topicu czatu.
+-- INSERT (nadawanie): broadcast WYŁĄCZNIE na `chat:typing:<id>`, presence
+-- WYŁĄCZNIE na `chat:presence`.
+drop policy if exists "chat_realtime_messages_insert" on realtime.messages;
+create policy "chat_realtime_messages_insert" on realtime.messages
+  for insert to authenticated
+  with check (
+    (
+      realtime.messages.extension = 'broadcast'
+      and (select realtime.topic()) like 'chat:typing:%'
+      and app.chat_topic_member((select realtime.topic()))
+    )
+    or (
+      realtime.messages.extension = 'presence'
+      and (select realtime.topic()) = 'chat:presence'
+      and app.chat_topic_member((select realtime.topic()))
+    )
+  );
 
 -- Domknięcie: anon nie ma nic na tabelach czatu (default privileges schematu
 -- n2click nadają ALL świeżym obiektom; tu tylko potwierdzamy stan).

@@ -21,12 +21,21 @@
 --   * pomijane (z NOTICE i bez błędu): komentarz bez autora (konto usunięte)
 --     oraz treść pusta albo dłuższa niż 4000 znaków (limit wiadomości).
 --     Zostają w `n2click.comments`; smoke check w L1-DB-NOTES.md liczy je
---     PRZED aplikacją.
+--     PRZED aplikacją,
+--   * BŁĄD zamiast cichego pominięcia (R1 finding 5): jeśli id komentarza zajmuje
+--     już wiadomość spoza rozmowy tego zadania (`messages.id` wybiera klient),
+--     import staje i nic nie zapisuje. Smoke check H w L1-DB-NOTES.md wykrywa to
+--     przed aplikacją,
+--   * wzmianki przechodzą przez trigger walidacji: zostają tylko osoby nazwane
+--     w treści jako @Imię i z wglądem w zadanie.
 --
 -- Cały import to JEDEN blok DO: wyłączenie i ponowne włączenie triggerów
 -- jest atomowe z danymi (błąd w środku cofa wszystko, triggery nie zostają
 -- wyłączone).
 -- =============================================================================
+
+-- DISABLE TRIGGER bierze SHARE ROW EXCLUSIVE na trzech tabelach czatu.
+set local lock_timeout = '5s';
 
 do $$
 declare
@@ -96,7 +105,25 @@ begin
     do nothing;
   get diagnostics v_conversations = row_count;
 
-  -- 2. Wiadomości (id komentarza = id wiadomości).
+  -- 2. Id komentarza zajęte przez wiadomość spoza rozmowy jego zadania:
+  --    `on conflict (id) do nothing` po cichu zgubiłby komentarz. Stop.
+  if exists (
+    select 1
+    from n2click.comments c
+    join n2click.messages m on m.id = c.id
+    where c.task_id is not null
+      and not exists (
+        select 1 from n2click.conversations conv
+        where conv.id = m.conversation_id
+          and conv.context_type = 'task'
+          and conv.context_id = c.task_id
+      )
+  ) then
+    raise exception 'task_chat_backfill: id komentarza zajęte przez wiadomość spoza rozmowy zadania (smoke check H w docs/karta-v2/L1-DB-NOTES.md)'
+      using errcode = '23505';
+  end if;
+
+  -- 3. Wiadomości (id komentarza = id wiadomości).
   insert into n2click.messages
     (id, conversation_id, author_id, body, mention_ids, created_at)
   select
@@ -116,7 +143,7 @@ begin
   on conflict (id) do nothing;
   get diagnostics v_messages = row_count;
 
-  -- 3. Porządek listy: rozmowa założona wcześniej przez chat_open_task (między
+  -- 4. Porządek listy: rozmowa założona wcześniej przez chat_open_task (między
   --    aplikacją pliku 1 i tego) też dostaje znacznik najnowszej wiadomości.
   update n2click.conversations conv
   set last_message_at = greatest(conv.last_message_at, latest.at)

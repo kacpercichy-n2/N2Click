@@ -17,6 +17,10 @@
 -- SVG jest poza listą celowo (skrypt w obrazie).
 -- =============================================================================
 
+-- Polityki na storage.objects biorą ACCESS EXCLUSIVE na tabeli całego Storage
+-- projektu: przy kolejce przerwij i powtórz (R1 finding 9).
+set local lock_timeout = '5s';
+
 -- Jak przy awatarach: polityki niżej porównują `owner_id` jako text. Jeśli
 -- hostowany schemat Storage się różni, migracja staje z jasnym błędem.
 do $$

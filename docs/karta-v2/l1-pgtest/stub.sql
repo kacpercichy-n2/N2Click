@@ -32,7 +32,9 @@ create table core.companies (id uuid primary key);
 create table core.profiles (
   id uuid primary key,
   access_role core.access_role not null default 'worker',
-  first_name text
+  first_name text,
+  notifications_seen_at timestamptz,
+  notifications_read_ids text[] not null default '{}'
 );
 create table core.app_access (
   user_id uuid not null,
@@ -159,6 +161,8 @@ begin
 end;
 $$;
 grant execute on all functions in schema realtime to authenticated;
+-- Klient wysyłający broadcast/presence = INSERT do realtime.messages (próba z R1 finding 1).
+grant usage on all sequences in schema realtime to authenticated;
 
 -- storage -------------------------------------------------------------------
 create table storage.buckets (

@@ -538,9 +538,9 @@ describe('karta zadania v2: rozmowy zadań, załączniki, powiadomienia', () => 
     expect(kartaSql).not.toMatch(/grant execute on function app\.chat_can_read_task\(uuid\) to [^;]*authenticated/);
   });
 
-  it('rozmowy zadań nie powstają ani nie dostają członków przez ogólne API', () => {
-    const insertConv = policies.find((p) => p.name === 'chat_conversations_insert' && p.statement.includes("'task'"));
-    expect(insertConv?.statement).toContain("context_type is distinct from 'task'");
+  it('rozmowy z kontekstem (zadanie, projekt, klient) nie powstają ani nie dostają członków przez ogólne API', () => {
+    const insertConv = policies.filter((p) => p.name === 'chat_conversations_insert').pop();
+    expect(insertConv?.statement).toContain('context_type is null and context_id is null');
     const insertMember = policies.filter((p) => p.name === 'chat_conversation_members_insert').pop();
     expect(insertMember?.statement).toContain('not app.chat_is_task_conversation(conversation_id)');
   });
@@ -602,13 +602,91 @@ describe('karta zadania v2: rozmowy zadań, załączniki, powiadomienia', () => 
     );
   });
 
-  it('powiadomienia: wzmianka wygrywa, odbiorca widzi zadanie, bez maila', () => {
+  it('powiadomienia: wzmianka wygrywa, task_message zbiorczo, odbiorca widzi zadanie, bez maila', () => {
     const body = functionBody(notify, 'n2click.chat_notify_task_message');
-    expect(body).toContain("case when m.user_id = any(new.mention_ids) then 'task_mention' else 'task_message' end");
+    expect(body).toContain("'task_mention'");
+    expect(body).toContain('not (m.user_id = any(new.mention_ids))');
     expect(body).toContain('m.user_id <> new.author_id');
     expect(body).toContain('app.chat_user_can_read_task(m.user_id, v_task)');
     expect(body).toContain('emailed_at');
+    // Jeden nieprzeczytany task_message na odbiorcę i rozmowę (R1 finding 4).
+    expect(notify).toContain(
+      "create unique index if not exists notifications_task_message_unread on n2click.notifications (recipient_id, (payload->>'conversationid')) where type = 'task_message' and read_at is null",
+    );
+    expect(body).toContain(
+      "on conflict (recipient_id, (payload->>'conversationid')) where type = 'task_message' and read_at is null do update set",
+    );
+    expect(body).toContain("'count', coalesce((n.payload->>'count')::integer, 1) + 1");
+    expect(body).toContain('created_at = now()');
     expect(notify).toContain('after insert on n2click.messages for each row execute function n2click.chat_notify_task_message()');
+  });
+
+  it('authenticated nie ma TRUNCATE / DELETE / TRIGGER / REFERENCES na notifications', () => {
+    expect(notify).toContain('revoke truncate, trigger, references, delete on n2click.notifications from authenticated');
+  });
+
+  it('każdy z czterech plików ustawia lock_timeout na początku', () => {
+    for (const f of kartaFiles) {
+      const sql = normalize(f.sql);
+      const at = sql.indexOf("set local lock_timeout = '5s'");
+      expect(at, f.name).toBeGreaterThan(-1);
+      const firstStatement = Math.min(
+        ...['alter table', 'create ', 'do $$', 'insert into'].map((k) => sql.indexOf(k)).filter((i) => i >= 0),
+      );
+      expect(at, f.name).toBeLessThan(firstStatement);
+    }
+  });
+
+  it('SELECT wiadomości i reakcji liczy członkostwo raz na zapytanie', () => {
+    const fn = functionBody(conversations, 'app.chat_my_conversation_ids');
+    expect(fn).toContain('returns setof uuid');
+    expect(fn).toContain("c.context_type is distinct from 'task' or app.chat_can_read_task(c.context_id)");
+    for (const name of ['chat_messages_select', 'chat_message_reactions_select']) {
+      const policy = policies.filter((p) => p.name === name).pop();
+      expect(policy?.statement, name).toContain('conversation_id in (select app.chat_my_conversation_ids())');
+      expect(policy?.statement, name).not.toContain('is_conversation_member');
+    }
+  });
+
+  it('realtime: klient nadaje tylko typing na chat:typing i presence na chat:presence', () => {
+    const insert = policies.filter((p) => p.name === 'chat_realtime_messages_insert').pop();
+    expect(insert?.table).toBe('realtime.messages');
+    expect(insert?.statement).toContain(
+      "realtime.messages.extension = 'broadcast' and (select realtime.topic()) like 'chat:typing:%'",
+    );
+    expect(insert?.statement).toContain(
+      "realtime.messages.extension = 'presence' and (select realtime.topic()) = 'chat:presence'",
+    );
+    expect(insert?.statement).not.toContain('chat:conv:');
+    expect(functionBody(conversations, 'app.chat_topic_member')).toContain("topic like 'chat:typing:%'");
+  });
+
+  it('revised_at: rewizja scalania; edited_at tylko ze zmianą treści', () => {
+    expect(conversations).toContain('add column if not exists revised_at timestamptz');
+    expect(conversations).toContain('alter column revised_at set not null');
+    const stamp = functionBody(conversations, 'n2click.chat_stamp_message_edit');
+    expect(stamp).toContain('if new.body is distinct from old.body then new.edited_at := greatest(');
+    expect(stamp).toContain(
+      'or new.pinned_at is distinct from old.pinned_at or new.deleted_at is distinct from old.deleted_at then new.revised_at := greatest(',
+    );
+    expect(functionBody(conversations, 'n2click.chat_validate_message_content')).toContain(
+      'new.revised_at := new.created_at',
+    );
+    expect(kartaSql).not.toMatch(/grant update \([^)]*revised_at/);
+  });
+
+  it('walidacja treści: najpierw członkostwo, wzmianki tylko z @Imieniem w treści', () => {
+    const body = functionBody(conversations, 'n2click.chat_validate_message_content');
+    expect(body.indexOf('not app.is_conversation_member(new.conversation_id)')).toBeGreaterThan(-1);
+    expect(body.indexOf('not app.is_conversation_member(new.conversation_id)')).toBeLessThan(body.indexOf('new.reply_to'));
+    expect(body).toContain('new.body ~* (');
+    expect(body).toContain('app.chat_user_can_read_task(u, v_task)');
+    expect(conversations).toContain('cardinality(mention_ids) <= 20');
+  });
+
+  it('backfill pada na zajętym id komentarza zamiast pomijać', () => {
+    expect(backfill).toContain("raise exception 'task_chat_backfill: id komentarza zajęte");
+    expect(backfill.indexOf('id komentarza zajęte')).toBeLessThan(backfill.indexOf('on conflict (id) do nothing'));
   });
 
   it('klient nie podrobi task_message / task_mention', () => {

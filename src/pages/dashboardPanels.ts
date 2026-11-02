@@ -19,6 +19,7 @@
 //   line. Desktop composition is untouched by this module.
 import type { Notification } from '../types';
 import { formatDuration } from '../utils/time';
+import { notificationMessageCount, taskConversationNotificationTitle } from '../utils/notifications';
 
 /** Dokąd prowadzi klik w powiadomienie: zadanie (modal) albo projekt (route). */
 export type NotificationTarget =
@@ -83,7 +84,7 @@ export function notificationEntry(n: Notification, names: NotificationNames): No
         : undefined;
       return {
         id: n.id,
-        title: `${actor} ${n.type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)'} w zadaniu: ${taskTitle}`,
+        title: taskConversationNotificationTitle(n.type, names.actorName, taskTitle, notificationMessageCount(n.payload)),
         when: projectMeta,
         target,
         preview: { who: actor, what: taskTitle, where: projectName },

@@ -794,7 +794,7 @@ describe('powiadomienia z rozmowy zadania (task_message / task_mention)', () => 
     const feed = notificationsForPerson(cloudFeed(), 'zuzia', NOW);
     expect(feed.map((n) => [n.id, n.kind, n.taskId, n.entityType, n.title])).toEqual([
       ['notification:men', 'mention', 't1', 'task', 'Ola Nowak wspomniał(a) Cię w zadaniu: Key visual'],
-      ['notification:msg', 'task_message', 't1', 'task', 'Ola Nowak napisał(a) w zadaniu: Key visual'],
+      ['notification:msg', 'task_message', 't1', 'task', 'Nowa wiadomość od Ola Nowak w zadaniu: Key visual'],
     ]);
     expect(feed.every((n) => !n.title.includes('—'))).toBe(true);
     expect(taskConversationNotificationId('msg')).toBe('notification:msg');
@@ -833,7 +833,7 @@ describe('powiadomienia z rozmowy zadania (task_message / task_mention)', () => 
   it('nieznany aktor (niemapowalny profil) => „Ktoś”, wiersz zostaje', () => {
     const s = cloudFeed({ notifications: [row('anon', 'task_message', { payload: { taskId: 't1' } })] });
     const [entry] = notificationsForPerson(s, 'zuzia', NOW);
-    expect(entry.title).toBe('Ktoś napisał(a) w zadaniu: Key visual');
+    expect(entry.title).toBe('Nowa wiadomość w zadaniu: Key visual');
     expect(entry.actorId).toBe('');
   });
 
@@ -846,6 +846,18 @@ describe('powiadomienia z rozmowy zadania (task_message / task_mention)', () => 
       'mention:c1',
       'notification:men',
     ]);
+  });
+
+  it('zbiorczy task_message: liczba wiadomości w zdaniu, nowy createdAt wraca jako nieprzeczytany po watermarku', () => {
+    const agg = row('agg', 'task_message', {
+      payload: { taskId: 't1', actorId: 'ola', count: 3 } as Notification['payload'],
+      createdAt: NOW,
+    });
+    const s = cloudFeed({ notifications: [agg] });
+    s.people = s.people.map((p) => (p.id === 'zuzia' ? { ...p, notificationsSeenAt: RECENT } : p));
+    const [entry] = notificationsForPerson(s, 'zuzia', NOW);
+    expect(entry.title).toBe('3 nowe wiadomości w zadaniu: Key visual');
+    expect(entry.read).toBe(false);
   });
 
   it('MARK_NOTIFICATION_ENTRY_READ oznacza wiersz rozmowy; ponowne oznaczenie zachowuje referencję', () => {
