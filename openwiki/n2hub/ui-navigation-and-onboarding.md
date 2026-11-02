@@ -268,6 +268,30 @@
   TaskModal (`useMediaQuery(MOBILE_NAV_QUERY)`); `AllocationGrid` i jej CSS
   zostają bez zmian, a lista zapisuje WYŁĄCZNIE przez te same
   `setCell`/`setCellStart` — druga ścieżka mutacji nie istnieje (inwariant 1).
+- KARTA ZADANIA v2 (2026-11-02, „Praca i rozmowa obok siebie”). `TaskEditor`
+  renderuje kartę bez zakładek, tę samą w modalu (`?task=`) i na pełnej
+  stronie `/tasks/:id`; powłoka podaje tylko `titleId` i `headerActions`
+  (status zapisu, kopiuj link, pełny widok, menu „⋯”, zamknij). Nagłówek to
+  ścieżka Klient > Projekt (klik otwiera istniejące selecty `t-client`/
+  `t-project`). Lewa kolumna: tytuł jako tekst (klik/Enter = pole `t-title`),
+  6 kafelków (Status, Priorytet, Okres, Osoby, Godziny, Kategoria i dział),
+  każdy otwiera POD siatką dotychczasowy edytor pola; Escape cofa zmiany tej
+  sesji edycji (te same settery) i oddaje fokus kafelkowi. Dalej Opis (tekst,
+  klik = autosize `t-desc`), Checklista, tabela „Godziny osób” i „Siatka dni”
+  jako jawny podwidok z „Wróć do szczegółów”, Wykonane bloki i Powtarzanie
+  zwinięte. Prawa kolumna: `TaskConversationPane` (linia czatu); tworzenie,
+  szkic i maska pokazują pusty stan. Układ: >= 1280 px obok siebie (prawa
+  420 do 520 px), 761 do 1279 px piętrowo, <= 760 px przełącznik
+  „Szczegóły | Rozmowa”. Edycja nie ma stopki „Gotowe” (zapisuje auto-zapis,
+  Enter w polu zapisuje od razu przez ten sam `doSave`); tworzenie i szkic
+  zachowują jawne przyciski i listę powodów blokady. Skok do powodu najpierw
+  otwiera właściwy edytor (`blockerTarget` w `taskCard/taskCardModel.ts`).
+  Logika zapisu, walidacji, uzgadniania i auto-zapisu jest bajt w bajt ta sama
+  co przed kartą v2. Style: `src/components/taskCard/task-card.css`, klasy
+  `task-sheet-*` (NIE `task-card-*`: te należą do kart zadań na stronach
+  projektów). Sprawdzenie w przeglądarce: siatka jest w podwidoku, więc testy
+  muszą najpierw kliknąć „Siatka dni” albo kafelek pola, a komórka siatki
+  zatwierdza wartość dopiero na blur.
 - `src/components/ModalFrame.tsx` owns the shared portal, modal stack, Escape,
   body scroll lock and inert root for Task, Event, Ticket, Quick Add and
   Changelog modals. The frosted background is a one-time opaque canvas produced
@@ -494,10 +518,10 @@
   źródłem etykiet podsumowania, a `periodInvalidTargets` oznacza OBA pola daty
   przy błędzie zakresu (`reversed`/`too-long`) i jedno przy błędzie pojedynczej
   daty. Pola TaskModala siedzą w
-  `<form className="task-editor-form" onSubmit>` obejmującym sekcje OD
-  „Szczegóły” DO „Zasobnik” WYŁĄCZNIE — „Dyskusja” (własny `<form>` w
-  `CommentsPanel`, zagnieżdżenie byłoby nielegalnym HTML-em) i sticky pasek
-  akcji zostają POZA formularzem.
+  `<form className="task-editor-form" onSubmit>` lewej kolumny karty (szczegóły
+  i podwidok „Siatka dni”). Rozmowa w prawej kolumnie (własny `<form>`,
+  zagnieżdżenie byłoby nielegalnym HTML-em), ścieżka Klient > Projekt w
+  nagłówku i stopka akcji zostają POZA formularzem.
 - Dymki podpowiedzi są WSPÓLNE i zastąpiły natywny `title` w CAŁEJ aplikacji —
   łącznie z kalendarzem i osią czasu (warunki brzegowe powierzchni przeciągania
   opisuje `scheduling-and-calendar.md`); w `src` nie ma już ANI JEDNEGO atrybutu
@@ -564,8 +588,8 @@
   wglądu: bursztynowa plansza `.confidential-notice` (tokeny `--n2-warning*`,
   informacja — nie czerwień) + WYŁĄCZNIE fakty planistyczne. TaskModal:
   `SectionFlags.contentMasked` w `taskModalSections.ts` zostawia
-  `period`/`people-hours`/`summary`/`allocation`/`done-blocks` (zakładka
-  „Dyskusja" znika), nagłówek = etykieta „Zadanie #N", wymuszony read-only,
+  `period`/`people-hours`/`summary`/`allocation`/`done-blocks` (prawa
+  kolumna pokazuje „Rozmowa jest ukryta”), tytuł = etykieta „Zadanie #N", wymuszony read-only,
   usuwanie ukryte. EventModal: data/godziny/uczestnicy read-only, bez
   tytułu/opisu/lokalizacji/linku, bez „Usuń" (maska WYGRYWA z
   `events.manage` — dotyczy też adminów). ProjectDetailPage: wczesny return

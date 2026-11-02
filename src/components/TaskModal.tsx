@@ -492,7 +492,7 @@ function TaskModalShell({
       {existing && (
         <Tooltip text="Otwórz pełny widok">
           <Link
-            className="icon-btn task-card-head-link"
+            className="icon-btn task-sheet-head-link"
             to={taskFullViewPath(existing.id)}
             aria-label="Otwórz pełny widok"
           >
@@ -543,7 +543,7 @@ function TaskModalShell({
       <div className="task-modal-viewport" {...viewportProps}>
         <m.div
           ref={cardRef}
-          className={notFound ? 'task-modal-card' : 'task-modal-card task-card-modal'}
+          className={notFound ? 'task-modal-card' : 'task-modal-card task-sheet-modal'}
           {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -579,10 +579,10 @@ function TaskModalShell({
             </>
           ) : (
             // Karta v2 ma DWA przewijane obszary (lewa kolumna i rozmowa, a w
-            // układzie piętrowym `.task-card-split`), więc ciało świadomie NIE
+            // układzie piętrowym `.task-sheet-split`), więc ciało świadomie NIE
             // nosi klasy `.task-modal-body` (jedyny scroller starej karty i jej
             // reguły pól). `bodyRef` zostaje: zerowanie pozycji jest tanie.
-            <div className="task-card-modal-body" ref={bodyRef}>
+            <div className="task-sheet-modal-body" ref={bodyRef}>
               <TaskEditor
                 key={taskParam}
                 taskId={existing ? existing.id : null}
@@ -1636,7 +1636,7 @@ export function TaskEditor({
       onClick={onToggle}
     >
       <span className="section-toggle-label">{label}</span>
-      {summary !== undefined && <span className="task-card-toggle-summary">{summary}</span>}
+      {summary !== undefined && <span className="task-sheet-toggle-summary">{summary}</span>}
       <span className="section-toggle-mark" aria-hidden>
         {open ? '−' : '+'}
       </span>
@@ -2270,7 +2270,7 @@ export function TaskEditor({
 
   const titleError = showError('title');
   const titleBlock = contentMasked && existing ? (
-    <h1 className="task-card-title" id={titleId}>
+    <h1 className="task-sheet-title" id={titleId}>
       {maskedTaskLabel(state, existing.id)}
     </h1>
   ) : !isEdit ? (
@@ -2286,7 +2286,7 @@ export function TaskEditor({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => markTouched('title')}
-            className={titleError ? 'invalid task-card-title-input' : 'task-card-title-input'}
+            className={titleError ? 'invalid task-sheet-title-input' : 'task-sheet-title-input'}
             placeholder="Co trzeba zrobić?"
             disabled={readOnly}
             aria-describedby={roDescWith(control)}
@@ -2296,11 +2296,11 @@ export function TaskEditor({
     </>
   ) : (
     <>
-      <h1 className="task-card-title" id={titleId}>
+      <h1 className="task-sheet-title" id={titleId}>
         {titleEditing && !readOnly ? (
           <input
             id="t-title"
-            className={titleError ? 'invalid task-card-title-input' : 'task-card-title-input'}
+            className={titleError ? 'invalid task-sheet-title-input' : 'task-sheet-title-input'}
             aria-label="Tytuł zadania"
             {...fieldAria('t-title', { hasHelp: false, hasError: titleError })}
             value={title}
@@ -2329,12 +2329,12 @@ export function TaskEditor({
           <button
             type="button"
             id={titleReadId}
-            className="task-card-title-read"
+            className="task-sheet-title-read"
             data-autofocus
             aria-describedby={titleError ? 't-title-error' : undefined}
             onClick={startTitleEdit}
           >
-            {title.trim() === '' ? <span className="task-card-placeholder">Dodaj tytuł</span> : title}
+            {title.trim() === '' ? <span className="task-sheet-placeholder">Dodaj tytuł</span> : title}
           </button>
         )}
       </h1>
@@ -2392,13 +2392,13 @@ export function TaskEditor({
       )}
 
       {show('details') && (
-        <section className="task-card-section" aria-labelledby={`${tabsBaseId}-desc-h`}>
+        <section className="task-sheet-section" aria-labelledby={`${tabsBaseId}-desc-h`}>
           <h2 id={`${tabsBaseId}-desc-h`}>Opis</h2>
           {descEditing && !readOnly ? (
             <textarea
               ref={descRef}
               id="t-desc"
-              className="task-card-desc-input"
+              className="task-sheet-desc-input"
               aria-label="Opis zadania"
               value={description}
               rows={3}
@@ -2417,20 +2417,20 @@ export function TaskEditor({
               }}
             />
           ) : readOnly ? (
-            <p className="task-card-desc-text">
-              {description.trim() === '' ? <span className="task-card-placeholder">Brak opisu</span> : description}
+            <p className="task-sheet-desc-text">
+              {description.trim() === '' ? <span className="task-sheet-placeholder">Brak opisu</span> : description}
             </p>
           ) : (
             <button
               type="button"
               id={descReadId}
-              className="task-card-desc-read"
+              className="task-sheet-desc-read"
               aria-label={description.trim() === '' ? 'Dodaj opis' : 'Edytuj opis'}
               onClick={startDescEdit}
             >
-              <span className="task-card-desc-text" aria-hidden={description.trim() !== '' ? undefined : true}>
+              <span className="task-sheet-desc-text" aria-hidden={description.trim() !== '' ? undefined : true}>
                 {description.trim() === '' ? (
-                  <span className="task-card-placeholder">Dodaj opis</span>
+                  <span className="task-sheet-placeholder">Dodaj opis</span>
                 ) : (
                   description
                 )}
@@ -2441,7 +2441,7 @@ export function TaskEditor({
               src/store/confidentiality.ts). Reduktor i tak ignoruje pole od
               innych, więc checkbox to bramka UX, nie zabezpieczenie. */}
           {isBoard && (
-            <div className="field task-card-confidential">
+            <div className="field task-sheet-confidential">
               <label className="checkbox-field">
                 <input
                   type="checkbox"
@@ -2459,8 +2459,8 @@ export function TaskEditor({
       )}
 
       {show('checklist') && (
-        <section className="task-card-section" aria-labelledby={`${tabsBaseId}-checklist-h`}>
-          <div className="task-card-section-head">
+        <section className="task-sheet-section" aria-labelledby={`${tabsBaseId}-checklist-h`}>
+          <div className="task-sheet-section-head">
             <h2 id={`${tabsBaseId}-checklist-h`}>Checklista</h2>
             {/* SY-20 — jeden wzór postępu, bez czasownika. */}
             {checklist.length > 0 && (
@@ -2530,10 +2530,10 @@ export function TaskEditor({
       )}
 
       {show('people-hours') && (
-        <section className="task-card-section" aria-labelledby={`${tabsBaseId}-hours-h`}>
-          <div className="task-card-section-head">
+        <section className="task-sheet-section" aria-labelledby={`${tabsBaseId}-hours-h`}>
+          <div className="task-sheet-section-head">
             <h2 id={`${tabsBaseId}-hours-h`}>Godziny osób</h2>
-            <span className="task-card-section-meta">
+            <span className="task-sheet-section-meta">
               {isDraft ? 'szkic' : `sprzedane ${formatDuration(soldTotal)}`}
             </span>
             {show('summary') && (
@@ -2551,7 +2551,7 @@ export function TaskEditor({
               <button
                 type="button"
                 id={gridButtonId}
-                className="task-card-grid-link"
+                className="task-sheet-grid-link"
                 onClick={openAllocation}
               >
                 <CalendarDays size={16} aria-hidden />
@@ -2632,7 +2632,7 @@ export function TaskEditor({
       )}
 
       {show('done-blocks') && (
-        <div className="task-card-section task-card-collapsible">
+        <div className="task-sheet-section task-sheet-collapsible">
           {/* IA-08 — sekcja jest ZWINIĘTA: ✓ na kafelku kalendarza jest szybszą
               drogą do tej samej akcji `SET_BLOCK_DONE`. Wejście z konkretnego
               bloku (`?task=<id>&block=<id>`) rozwija ją SAMO. */}
@@ -2687,7 +2687,7 @@ export function TaskEditor({
       )}
 
       {show('recurrence') && (
-        <div className="task-card-section task-card-collapsible">
+        <div className="task-sheet-section task-sheet-collapsible">
           {/* Cykliczność — ZWINIĘTY wiersz. Wystąpienia są wyłącznie podglądem
               (invariant 1); sekcja dispatchuje SET_TASK_RECURRENCE /
               SET_RECURRENCE_OVERRIDE i NIGDY nie rusza draftu SAVE_TASK ani
@@ -2865,12 +2865,12 @@ export function TaskEditor({
   );
 
   const allocationSubview = (
-    <div className="task-card-subview" onKeyDown={escapeCancels(() => closeAllocation())}>
-      <div className="task-card-subview-head">
+    <div className="task-sheet-subview" onKeyDown={escapeCancels(() => closeAllocation())}>
+      <div className="task-sheet-subview-head">
         <button
           type="button"
           id={`${tabsBaseId}-grid-back`}
-          className="btn ghost task-card-back"
+          className="btn ghost task-sheet-back"
           onClick={closeAllocation}
         >
           <ArrowLeft size={16} aria-hidden />
@@ -2888,7 +2888,7 @@ export function TaskEditor({
   const blockersVisible = !readOnly && blockers.length > 0 && (saveAttempted || (isEdit && dirty));
   const showFooter = !readOnly && (blockersVisible || !isEdit || isDraft);
   const footer = showFooter ? (
-    <div className="editor-actions editor-actions-sticky task-card-footer">
+    <div className="editor-actions editor-actions-sticky task-sheet-footer">
       {/* IA-12 — powody, przez które zapis nie przejdzie, stoją PRZY przyciskach.
           Każdy powód z kotwicą jest klikalny i otwiera swój edytor. */}
       {blockersVisible && (
@@ -2980,21 +2980,21 @@ export function TaskEditor({
   };
 
   return (
-    <div className="editor task-editor task-card">
+    <div className="editor task-editor task-sheet">
       {readOnly && (
         <span id={roDescId} className="sr-only">
           {roReason}
         </span>
       )}
-      <header className="task-card-head">
-        <nav className="task-card-crumbs" aria-label="Klient i projekt">
+      <header className="task-sheet-head">
+        <nav className="task-sheet-crumbs" aria-label="Klient i projekt">
           {showClientCrumb && (
             <>
               <Tooltip text={readOnly ? (roReason ?? '') : ''}>
                 <button
                   type="button"
                   id={crumbDomId('client')}
-                  className="task-card-crumb"
+                  className="task-sheet-crumb"
                   aria-expanded={readOnly ? undefined : crumbsOpen}
                   aria-controls={readOnly ? undefined : crumbsEditorId}
                   aria-disabled={readOnly || undefined}
@@ -3004,17 +3004,17 @@ export function TaskEditor({
                   }}
                 >
                   <Building2 size={14} aria-hidden />
-                  <span className="task-card-crumb-text">{pickedClientName ?? 'Bez klienta'}</span>
+                  <span className="task-sheet-crumb-text">{pickedClientName ?? 'Bez klienta'}</span>
                 </button>
               </Tooltip>
-              <ChevronRight size={14} className="task-card-crumb-sep" aria-hidden />
+              <ChevronRight size={14} className="task-sheet-crumb-sep" aria-hidden />
             </>
           )}
           <Tooltip text={readOnly ? (roReason ?? '') : ''}>
             <button
               type="button"
               id={crumbDomId('project')}
-              className="task-card-crumb"
+              className="task-sheet-crumb"
               data-invalid={showError('project') ? 'true' : undefined}
               aria-expanded={readOnly ? undefined : crumbsOpen}
               aria-controls={readOnly ? undefined : crumbsEditorId}
@@ -3025,19 +3025,19 @@ export function TaskEditor({
               }}
             >
               <Folder size={14} aria-hidden />
-              <span className="task-card-crumb-text">{pickedProject?.name ?? 'Wybierz projekt'}</span>
+              <span className="task-sheet-crumb-text">{pickedProject?.name ?? 'Wybierz projekt'}</span>
             </button>
           </Tooltip>
         </nav>
-        <div className="task-card-head-actions">{headerActions}</div>
+        <div className="task-sheet-head-actions">{headerActions}</div>
       </header>
       {!crumbsOpen && showError('project') && state.projects.length > 0 && (
-        <p className="field-error task-card-crumb-error">Wybierz projekt dla tego zadania.</p>
+        <p className="field-error task-sheet-crumb-error">Wybierz projekt dla tego zadania.</p>
       )}
       {crumbsOpen && (
         <div
           id={crumbsEditorId}
-          className="task-card-crumbs-editor"
+          className="task-sheet-crumbs-editor"
           role="group"
           aria-label="Edycja: klient i projekt"
           onKeyDown={escapeCancels(closeCrumbs)}
@@ -3103,7 +3103,7 @@ export function TaskEditor({
               }
             </Field>
           </div>
-          <div className="task-tile-editor-head task-card-crumbs-actions">
+          <div className="task-tile-editor-head task-sheet-crumbs-actions">
             <span className="task-tile-editor-hint">Escape cofa zmiany</span>
             <button type="button" className="btn ghost" onClick={() => closeCrumbs(false)}>
               Zwiń
@@ -3112,7 +3112,7 @@ export function TaskEditor({
         </div>
       )}
       {isMobileNav && (
-        <div className="task-card-segmented" role="tablist" aria-label="Widok karty zadania">
+        <div className="task-sheet-segmented" role="tablist" aria-label="Widok karty zadania">
           {PANES.map((pane) => (
             <button
               key={pane}
@@ -3122,7 +3122,7 @@ export function TaskEditor({
               aria-selected={mobilePane === pane}
               aria-controls={pane === 'details' ? detailsPaneId : conversationPaneId}
               tabIndex={mobilePane === pane ? 0 : -1}
-              className="task-card-segment"
+              className="task-sheet-segment"
               onClick={() => setMobilePane(pane)}
               onKeyDown={onPaneKeyDown}
             >
@@ -3131,10 +3131,10 @@ export function TaskEditor({
           ))}
         </div>
       )}
-      <div className="task-card-split">
+      <div className="task-sheet-split">
         <div
           id={detailsPaneId}
-          className="task-card-main"
+          className="task-sheet-main"
           hidden={isMobileNav && mobilePane !== 'details'}
           {...(isMobileNav ? { role: 'tabpanel', 'aria-labelledby': paneTabId('details') } : {})}
         >
@@ -3177,7 +3177,7 @@ export function TaskEditor({
         </div>
         <div
           id={conversationPaneId}
-          className="task-card-side"
+          className="task-sheet-side"
           hidden={isMobileNav && mobilePane !== 'conversation'}
           {...(isMobileNav
             ? { role: 'tabpanel', 'aria-labelledby': paneTabId('conversation') }

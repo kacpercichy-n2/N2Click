@@ -136,12 +136,12 @@ export function CopyTaskLinkButton({ path }: { path: string }) {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
-      announce({ id: 'task-card:copy-link', text: 'Skopiowano link do zadania.', tone: 'polite' });
+      announce({ id: 'task-sheet:copy-link', text: 'Skopiowano link do zadania.', tone: 'polite' });
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(false), 1600);
     } catch {
       announce({
-        id: 'task-card:copy-link',
+        id: 'task-sheet:copy-link',
         text: 'Nie udało się skopiować linku. Skopiuj adres z paska przeglądarki.',
         tone: 'assertive',
       });
@@ -161,7 +161,7 @@ export function CopyTaskLinkButton({ path }: { path: string }) {
 /** Prawy panel, zanim rozmowa może istnieć (tworzenie, szkic, maska). */
 export function TaskConversationEmpty({ text }: { text: string }) {
   return (
-    <div className="task-card-conversation-empty">
+    <div className="task-sheet-conversation-empty">
       <MessageSquare size={28} aria-hidden />
       <p>{text}</p>
     </div>

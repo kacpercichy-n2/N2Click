@@ -160,7 +160,7 @@ function TaskFullView({ taskId }: { taskId: string }) {
   );
 
   return (
-    <section className="page task-card-page" aria-labelledby={titleId}>
+    <section className="page task-sheet-page" aria-labelledby={titleId}>
       {/* Pytanie o niezapisane zmiany należy do strażnika routera (zakres
           `task-page`), a nie do lokalnego potwierdzenia: strona żyje na
           ŚCIEŻCE, więc każde wyjście z niej i tak przechodzi przez strażnika. */}

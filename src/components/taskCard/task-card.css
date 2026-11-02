@@ -3,15 +3,15 @@
    Prawa kolumna: rozmowa na pełną wysokość (`TaskConversationPane`, linia L3).
    Układ: >= 1280 px obok siebie, 761 do 1279 px piętrowo (rozmowa pod
    szczegółami), <= 760 px przełącznik „Szczegóły | Rozmowa".
-   Przewijają się WYŁĄCZNIE lewa kolumna i rozmowa (piętrowo: `.task-card-split`).
+   Przewijają się WYŁĄCZNIE lewa kolumna i rozmowa (piętrowo: `.task-sheet-split`).
    Tylko tokeny `--n2-*`, bez własnych z-indeksów. */
 
 /* ---- Powłoka modala ---------------------------------------------------- */
-.task-modal-card.task-card-modal {
+.task-modal-card.task-sheet-modal {
   max-width: min(1320px, 94vw);
   height: min(840px, 88dvh);
 }
-.task-card-modal-body {
+.task-sheet-modal-body {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -19,23 +19,23 @@
   overflow: hidden;
 }
 @media (max-width: 760px) {
-  .task-modal-card.task-card-modal {
+  .task-modal-card.task-sheet-modal {
     height: calc(94dvh - var(--n2-kb-inset, 0px));
   }
 }
 
 /* ---- Karta (modal i pełna strona) -------------------------------------- */
-.task-card {
+.task-sheet {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
 }
-.task-card [hidden] {
+.task-sheet [hidden] {
   display: none !important;
 }
 
-.task-card-head {
+.task-sheet-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -43,25 +43,25 @@
   padding: var(--n2-space-3) var(--n2-space-4) var(--n2-space-3) var(--n2-space-5);
   border-bottom: 1px solid var(--n2-border);
 }
-.task-card-head-actions {
+.task-sheet-head-actions {
   display: flex;
   align-items: center;
   gap: var(--n2-space-2);
   margin-left: auto;
 }
-.task-card-head-link {
+.task-sheet-head-link {
   color: var(--n2-text-soft);
   text-decoration: none;
 }
 
-.task-card-crumbs {
+.task-sheet-crumbs {
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
   flex: 1 1 18rem;
 }
-.task-card-crumb {
+.task-sheet-crumb {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -80,58 +80,58 @@
   transition: background var(--n2-transition), color var(--n2-transition);
 }
 /* Pole trafienia >= 44 px bez powiększania belki nagłówka. */
-.task-card-crumb::after {
+.task-sheet-crumb::after {
   content: '';
   position: absolute;
   inset: -4px 0;
 }
-.task-card-crumb:hover {
+.task-sheet-crumb:hover {
   background: var(--n2-surface-muted);
   color: var(--n2-text);
 }
-.task-card-crumb[aria-expanded='true'] {
+.task-sheet-crumb[aria-expanded='true'] {
   color: var(--n2-text);
   border-color: var(--n2-border-strong);
 }
-.task-card-crumb[aria-disabled='true'] {
+.task-sheet-crumb[aria-disabled='true'] {
   cursor: default;
 }
-.task-card-crumb[aria-disabled='true']:hover {
+.task-sheet-crumb[aria-disabled='true']:hover {
   background: none;
   color: var(--n2-text-soft);
 }
-.task-card-crumb[data-invalid='true'] {
+.task-sheet-crumb[data-invalid='true'] {
   border-color: var(--n2-danger);
 }
-.task-card-crumb svg {
+.task-sheet-crumb svg {
   flex: none;
   display: block;
 }
-.task-card-crumb-text {
+.task-sheet-crumb-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-card-crumb-sep {
+.task-sheet-crumb-sep {
   flex: none;
   color: var(--n2-text-muted);
 }
-.task-card-crumb-error {
+.task-sheet-crumb-error {
   margin: var(--n2-space-2) var(--n2-space-5) 0;
 }
-.task-card-crumbs-editor {
+.task-sheet-crumbs-editor {
   margin: var(--n2-space-3) var(--n2-space-5) 0;
   padding: var(--n2-space-4);
   border: 1px solid var(--n2-border-strong);
   border-radius: var(--n2-radius-sm);
   background: var(--n2-surface-muted);
 }
-.task-card-crumbs-actions {
+.task-sheet-crumbs-actions {
   margin: var(--n2-space-2) 0 0;
 }
 
 /* ---- Przełącznik telefonu ---------------------------------------------- */
-.task-card-segmented {
+.task-sheet-segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
@@ -140,7 +140,7 @@
   border-radius: var(--n2-radius-pill);
   background: var(--n2-surface-muted);
 }
-.task-card-segment {
+.task-sheet-segment {
   min-height: 44px;
   border: 0;
   border-radius: var(--n2-radius-pill);
@@ -152,7 +152,7 @@
   touch-action: manipulation;
   transition: background var(--n2-transition), color var(--n2-transition);
 }
-.task-card-segment[aria-selected='true'] {
+.task-sheet-segment[aria-selected='true'] {
   background: var(--n2-violet);
   color: var(--n2-text);
 }
@@ -160,7 +160,7 @@
 /* ---- Kolumny ----------------------------------------------------------- */
 /* Piętrowo (761 do 1279 px): przewija się cały podział, rozmowa ma stałą
    wysokość i przewija się w środku. */
-.task-card-split {
+.task-sheet-split {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -168,7 +168,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.task-card-main {
+.task-sheet-main {
   display: flex;
   flex-direction: column;
   padding: var(--n2-space-5) var(--n2-space-6) 0;
@@ -177,10 +177,10 @@
 }
 /* Formularz rośnie, więc stopka („Utwórz zadanie”, powody blokady) stoi przy
    dolnej krawędzi kolumny i nie skacze, gdy nad nią pojawi się błąd pola. */
-.task-card-main > .task-editor-form {
+.task-sheet-main > .task-editor-form {
   flex: 1 0 auto;
 }
-.task-card-side {
+.task-sheet-side {
   display: flex;
   flex-direction: column;
   flex: none;
@@ -191,24 +191,32 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.task-card-side > * {
+.task-sheet-side > * {
   flex: 1 1 auto;
   min-height: 0;
 }
+/* Tryb lokalny: `TaskConversationPane` pokazuje `CommentsPanel`. Panel ma
+   własną kartę (ramka, tło, zaokrąglenie), a tu stoi już w kolumnie karty, więc
+   bez drugiej ramki. */
+.task-sheet-side .comments-panel {
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
 
 @media (min-width: 1280px) {
-  .task-card-split {
+  .task-sheet-split {
     flex-direction: row;
     overflow: hidden;
   }
-  .task-card-main {
+  .task-sheet-main {
     flex: 1 1 auto;
     min-width: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-bottom: var(--n2-space-5);
   }
-  .task-card-side {
+  .task-sheet-side {
     flex: 0 0 clamp(420px, 40%, 520px);
     height: auto;
     min-height: 0;
@@ -220,28 +228,28 @@
 
 /* Telefon: jeden panel naraz, każdy przewija się sam. */
 @media (max-width: 760px) {
-  .task-card-head {
+  .task-sheet-head {
     padding: var(--n2-space-2) var(--n2-space-3);
   }
-  .task-card-crumbs {
+  .task-sheet-crumbs {
     order: 2;
     flex-basis: 100%;
   }
-  .task-card-crumb-error,
-  .task-card-crumbs-editor {
+  .task-sheet-crumb-error,
+  .task-sheet-crumbs-editor {
     margin-left: var(--n2-space-4);
     margin-right: var(--n2-space-4);
   }
-  .task-card-split {
+  .task-sheet-split {
     overflow: hidden;
   }
-  .task-card-main {
+  .task-sheet-main {
     flex: 1 1 auto;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: var(--n2-space-4) var(--n2-space-4) 0;
   }
-  .task-card-side {
+  .task-sheet-side {
     flex: 1 1 auto;
     height: auto;
     min-height: 0;
@@ -250,44 +258,44 @@
 }
 
 /* ---- Pełna strona `/tasks/:id`: ta sama karta bez powłoki modala -------- */
-.task-card-page .task-card {
+.task-sheet-page .task-sheet {
   border: 1px solid var(--n2-border);
   border-radius: var(--n2-radius-lg);
   background: var(--n2-panel);
   overflow: hidden;
 }
-.task-card-page .task-card-split {
+.task-sheet-page .task-sheet-split {
   overflow: visible;
 }
 @media (min-width: 1280px) {
-  .task-card-page .task-card {
+  .task-sheet-page .task-sheet {
     height: calc(100dvh - var(--n2-space-12) * 2);
     min-height: 560px;
   }
-  .task-card-page .task-card-split {
+  .task-sheet-page .task-sheet-split {
     overflow: hidden;
   }
 }
 @media (max-width: 760px) {
-  .task-card-page .task-card {
+  .task-sheet-page .task-sheet {
     height: calc(100dvh - var(--n2-bottom-nav-h) - 96px);
     min-height: 480px;
   }
-  .task-card-page .task-card-split {
+  .task-sheet-page .task-sheet-split {
     overflow: hidden;
   }
 }
 
 /* ---- Tytuł i opis: tekst do odczytu, klik = edycja --------------------- */
-.task-card-title {
+.task-sheet-title {
   margin: 0;
   font-size: var(--n2-type-xl);
   font-weight: 650;
   line-height: var(--n2-line-title);
   overflow-wrap: anywhere;
 }
-.task-card-title-read,
-.task-card-desc-read {
+.task-sheet-title-read,
+.task-sheet-desc-read {
   display: block;
   width: calc(100% + 2 * var(--n2-space-2));
   min-height: 44px;
@@ -302,22 +310,22 @@
   cursor: text;
   transition: background var(--n2-transition), border-color var(--n2-transition);
 }
-.task-card-title-read:hover,
-.task-card-desc-read:hover {
+.task-sheet-title-read:hover,
+.task-sheet-desc-read:hover {
   background: var(--n2-surface-muted);
   border-color: var(--n2-border);
 }
-.task-card-title-input {
+.task-sheet-title-input {
   width: 100%;
   font-size: inherit;
   font-weight: inherit;
   line-height: inherit;
 }
-.task-card-placeholder {
+.task-sheet-placeholder {
   color: var(--n2-text-muted);
   font-weight: 400;
 }
-.task-card-desc-text {
+.task-sheet-desc-text {
   display: block;
   margin: 0;
   color: var(--n2-text-soft);
@@ -326,7 +334,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.task-card-desc-input {
+.task-sheet-desc-input {
   display: block;
   width: 100%;
   min-height: 5.5rem;
@@ -335,7 +343,7 @@
   font-size: var(--n2-type-md);
   line-height: var(--n2-line-body);
 }
-.task-card-confidential {
+.task-sheet-confidential {
   margin-top: var(--n2-space-3);
 }
 
@@ -410,7 +418,7 @@
   min-height: 26px;
   font-size: var(--n2-type-sm);
   font-weight: 600;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .task-tile-people,
 .task-tile-classification {
@@ -418,6 +426,12 @@
   align-items: center;
   gap: var(--n2-space-2);
   min-width: 0;
+}
+/* Wąski kafelek: chip i dział przechodzą do nowej linii całymi słowami. */
+.task-tile-classification {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  overflow-wrap: break-word;
 }
 .task-tile-avatars {
   display: flex;
@@ -529,31 +543,31 @@
 }
 
 /* ---- Sekcje lewej kolumny ---------------------------------------------- */
-.task-card-section {
+.task-sheet-section {
   margin-top: var(--n2-space-6);
 }
-.task-card-section h2 {
+.task-sheet-section h2 {
   margin: 0 0 var(--n2-space-2);
   font-size: var(--n2-type-md);
   font-weight: 650;
 }
-.task-card-section-head {
+.task-sheet-section-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--n2-space-2) var(--n2-space-3);
   margin-bottom: var(--n2-space-2);
 }
-.task-card-section-head h2 {
+.task-sheet-section-head h2 {
   margin: 0;
 }
-.task-card-section-meta,
-.task-card-section-head .checklist-count {
+.task-sheet-section-meta,
+.task-sheet-section-head .checklist-count {
   margin: 0;
   color: var(--n2-text-muted);
   font-size: var(--n2-type-sm);
 }
-.task-card-grid-link {
+.task-sheet-grid-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -569,20 +583,20 @@
   font-weight: 600;
   cursor: pointer;
 }
-.task-card-grid-link:hover {
+.task-sheet-grid-link:hover {
   background: var(--n2-surface-muted);
 }
-.task-card-grid-link svg {
+.task-sheet-grid-link svg {
   display: block;
 }
-.task-card-collapsible {
+.task-sheet-collapsible {
   margin-top: var(--n2-space-4);
   border-top: 1px solid var(--n2-border-soft);
 }
-.task-card-collapsible .section-toggle {
+.task-sheet-collapsible .section-toggle {
   min-height: 44px;
 }
-.task-card-toggle-summary {
+.task-sheet-toggle-summary {
   margin-left: auto;
   color: var(--n2-text-muted);
   font-size: var(--n2-type-sm);
@@ -631,18 +645,18 @@
 }
 
 /* ---- Podwidok „Siatka dni" --------------------------------------------- */
-.task-card-subview-head {
+.task-sheet-subview-head {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--n2-space-3);
   margin-bottom: var(--n2-space-3);
 }
-.task-card-subview-head h2 {
+.task-sheet-subview-head h2 {
   margin: 0;
   font-size: var(--n2-type-lg);
 }
-.task-card-back {
+.task-sheet-back {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -650,20 +664,20 @@
 }
 /* Lepki nagłówek siatki potrzebuje własnego scrollportu (dawna reguła S3
    `.task-modal-body .alloc-wrap`, której karta v2 już nie dziedziczy). */
-.task-card .alloc-wrap {
+.task-sheet .alloc-wrap {
   max-height: 60vh;
   overflow: auto;
   overscroll-behavior: auto;
 }
 
 /* ---- Stopka (tworzenie, szkic, powody blokady) ------------------------- */
-.task-card-footer {
+.task-sheet-footer {
   margin-top: var(--n2-space-5);
   background: var(--n2-panel);
 }
 
 /* ---- Rozmowa przed utworzeniem zadania --------------------------------- */
-.task-card-conversation-empty {
+.task-sheet-conversation-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -673,7 +687,7 @@
   color: var(--n2-text-muted);
   text-align: center;
 }
-.task-card-conversation-empty p {
+.task-sheet-conversation-empty p {
   margin: 0;
   max-width: 28ch;
 }
