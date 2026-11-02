@@ -618,7 +618,7 @@ export interface CalendarEvent {
 
 /** Rodzaj powiadomienia in-app — stały zbiór wartości (persystencja + kolumna
  *  `notifications.type`). Etykiety/treść po polsku buduje `dashboardPanels.ts`. */
-export type NotificationType = 'task_assigned' | 'project_comment' | 'bin_item';
+export type NotificationType = 'task_assigned' | 'project_comment' | 'bin_item' | 'task_message' | 'task_mention';
 
 /** Ładunek powiadomienia (`notifications.payload`, jsonb): dokąd prowadzi klik i
  *  kto je wywołał. Wszystkie pola OPCJONALNE — kształt zależy od `type`. */

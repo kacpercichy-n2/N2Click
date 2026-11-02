@@ -310,6 +310,11 @@ describe('konwencja plików migracji', () => {
       // Bez zmian RLS.
       '20260915120000_events_personal_times_and_absence_kind.sql',
       '20261005085434_service_role_app_schema.sql',
+      '20261102100000_task_conversations.sql',
+      '20261102101000_task_chat_storage.sql',
+      '20261102102000_task_chat_backfill.sql',
+      '20261102103000_task_chat_notifications.sql',
+
     ]);
   });
 
@@ -448,7 +453,7 @@ describe('storage: prywatne awatary', () => {
 
   it('polityki zapisu wiążą folder ścieżki z owner_id wgrywającego', () => {
     const writes = policies.filter(
-      (p) => p.table === 'storage.objects' && p.command !== 'select',
+      (p) => p.table === 'storage.objects' && p.name.startsWith('avatars_') && p.command !== 'select',
     );
     expect(writes.length).toBeGreaterThanOrEqual(3);
     for (const policy of writes) {

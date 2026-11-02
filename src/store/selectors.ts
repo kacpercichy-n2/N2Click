@@ -2248,7 +2248,7 @@ export function workloadCellDetail(
 /** How far back the derived feed looks. Older events fall off the tile. */
 export const NOTIFICATION_WINDOW_DAYS = 14;
 
-export type NotificationKind = 'mention' | 'assignment';
+export type NotificationKind = 'mention' | 'assignment' | 'task_message';
 
 /** Id wpisu feedu dla przypisania: klucz PARY (taskId, personId) — stabilny
  *  przez SAVE_TASK, hydrację chmury i między urządzeniami. */
@@ -2407,6 +2407,24 @@ export function notificationsForPerson(
       title: `${actor.name} przypisał(a) Ci zadanie — ${taskDisplayTitle(state, task)}`,
       createdAt: assignedAt,
       read: isRead(assignedAt, entryId, `assignment:${a.id}`),
+    });
+  }
+
+  // Cloud task messages are server-generated; legacy comment/assignment rows above stay derived.
+  for (const n of state.notifications) {
+    if (n.recipientId !== personId || !withinWindow(n.createdAt)) continue;
+    if (n.type !== 'task_message' && n.type !== 'task_mention') continue;
+    const task = getTask(state, n.payload.taskId ?? '');
+    if (!task) continue;
+    const actorId = n.payload.actorId ?? '';
+    if (actorId === personId) continue;
+    const actorName = getPerson(state, actorId)?.name ?? 'Ktoś';
+    const id = `notification:${n.id}`;
+    out.push({
+      id, kind: n.type === 'task_mention' ? 'mention' : 'task_message',
+      actorId, actorName, entityType: 'task', entityId: task.id, taskId: task.id,
+      title: `${actorName} ${n.type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)'} w zadaniu: ${taskDisplayTitle(state, task)}`,
+      createdAt: n.createdAt, read: !!n.readAt || isRead(n.createdAt, id),
     });
   }
 

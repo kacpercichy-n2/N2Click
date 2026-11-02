@@ -339,3 +339,12 @@ describe('workloadSummaryLine', () => {
     );
   });
 });
+
+it.each(['task_message', 'task_mention'] as const)('maps %s to the task card', (type) => {
+  const entry = notificationEntry({ id: 'n', recipientId: 'r', type,
+    payload: { taskId: 't', actorId: 'a' }, createdAt: '', readAt: '' },
+  { actorName: 'Ola Nowak', taskTitle: 'Key visual', projectName: 'Projekt', commentBody: '' });
+  expect(entry.target).toEqual({ kind: 'task', taskId: 't' });
+  expect(entry.openLabel).toBe('Otwórz zadanie');
+  expect(entry.title).toBe(`Ola Nowak ${type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)'} w zadaniu: Key visual`);
+});

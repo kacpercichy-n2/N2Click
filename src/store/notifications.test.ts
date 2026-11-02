@@ -757,3 +757,43 @@ describe('stabilność „przeczytane" przypisania', () => {
     expect(saved.people).toBe(base.people);
   });
 });
+
+describe('server task conversation notifications', () => {
+  function cloudFeed() {
+    return {
+      ...emptyData(), people: [person('zuzia', 'Zuzia'), person('ola', 'Ola Nowak')],
+      tasks: [task('t1')],
+      notifications: [
+        { id: 'msg', recipientId: 'zuzia', type: 'task_message' as const,
+          payload: { taskId: 't1', actorId: 'ola' }, readAt: '', createdAt: RECENT },
+        { id: 'mention', recipientId: 'zuzia', type: 'task_mention' as const,
+          payload: { taskId: 't1', actorId: 'ola' }, readAt: '', createdAt: RECENT },
+      ],
+    };
+  }
+  it('maps both types into stable task targets and Polish sentences', () => {
+    const feed = notificationsForPerson(cloudFeed(), 'zuzia', NOW);
+    expect(feed.map(n => [n.id, n.taskId, n.title])).toEqual([
+      ['notification:msg', 't1', 'Ola Nowak napisał(a) w zadaniu: Zadanie t1'],
+      ['notification:mention', 't1', 'Ola Nowak wspomniał(a) Cię w zadaniu: Zadanie t1'],
+    ]);
+  });
+  it('respects row read_at, watermark and individual read IDs', () => {
+    for (const via of ['row', 'watermark', 'id']) {
+      const state = cloudFeed();
+      if (via === 'row') state.notifications[0].readAt = NOW;
+      if (via === 'watermark') state.people[0].notificationsSeenAt = NOW;
+      if (via === 'id') state.people[0].notificationsReadIds = ['notification:msg'];
+      expect(notificationsForPerson(state, 'zuzia', NOW)[0].read).toBe(true);
+    }
+  });
+  it('filters other recipients, old rows, own actions and missing task targets', () => {
+    const state = cloudFeed();
+    state.notifications = state.notifications.flatMap(n => [
+      { ...n, recipientId: 'ola' }, { ...n, createdAt: OLD },
+      { ...n, payload: { taskId: 't1', actorId: 'zuzia' } },
+      { ...n, payload: { taskId: 'missing', actorId: 'ola' } },
+    ]);
+    expect(notificationsForPerson(state, 'zuzia', NOW)).toEqual([]);
+  });
+});

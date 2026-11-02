@@ -8,6 +8,9 @@
 // (SELECT own rows, RLS). Dlatego NIGDY nie tworzymy powiadomienia „dla samego
 // siebie" (recipient === actor jest pomijany).
 //
+// task_message/task_mention are emitted only by the messages AFTER INSERT trigger.
+// Task chat never enters AppData.comments, so this diff cannot duplicate them.
+//
 // Trzy punkty zaczepienia (najmniej inwazyjne — diff istniejących kolekcji):
 //   (a) task_assigned  — nowa para przypisania (task, osoba), zadanie opublikowane;
 //   (b) project_comment — nowy komentarz do projektu -> uczestnicy (osoby

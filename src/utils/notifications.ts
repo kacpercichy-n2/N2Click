@@ -6,6 +6,8 @@ import type { NotificationPayload, NotificationType } from '../types';
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'task_assigned',
+  'task_message',
+  'task_mention',
   'project_comment',
   'bin_item',
 ];
@@ -16,8 +18,12 @@ export function isNotificationType(v: unknown): v is NotificationType {
 
 /** Klucze ładunku, które przenosimy (reszta jest ignorowana). Wszystkie to
  *  stringi (id encji / osoby); pusty/nie-string => klucz pominięty. */
-const PAYLOAD_KEYS: Array<keyof NotificationPayload> = [
+type SanitizedNotificationPayload = NotificationPayload & { conversationId?: string; messageId?: string };
+
+const PAYLOAD_KEYS: Array<keyof SanitizedNotificationPayload> = [
   'taskId',
+  'conversationId',
+  'messageId',
   'projectId',
   'commentId',
   'actorId',
@@ -28,10 +34,10 @@ const PAYLOAD_KEYS: Array<keyof NotificationPayload> = [
  * `NotificationPayload`: tylko znane klucze, każda wartość to niepusty string.
  * Wejście spoza obiektu => pusty ładunek `{}`. Idempotentne.
  */
-export function sanitizeNotificationPayload(raw: unknown): NotificationPayload {
+export function sanitizeNotificationPayload(raw: unknown): SanitizedNotificationPayload {
   if (typeof raw !== 'object' || raw === null) return {};
   const rec = raw as Record<string, unknown>;
-  const out: NotificationPayload = {};
+  const out: SanitizedNotificationPayload = {};
   for (const key of PAYLOAD_KEYS) {
     const value = rec[key];
     if (typeof value === 'string' && value !== '') out[key] = value;

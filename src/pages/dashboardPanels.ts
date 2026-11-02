@@ -76,6 +76,20 @@ export function notificationEntry(n: Notification, names: NotificationNames): No
   const projectMeta = names.projectName.trim() || undefined;
   const commentBody = names.commentBody.trim();
   switch (n.type) {
+    case 'task_message':
+    case 'task_mention': {
+      const target: NotificationTarget | undefined = n.payload.taskId
+        ? { kind: 'task', taskId: n.payload.taskId }
+        : undefined;
+      return {
+        id: n.id,
+        title: `${actor} ${n.type === 'task_mention' ? 'wspomniał(a) Cię' : 'napisał(a)'} w zadaniu: ${taskTitle}`,
+        when: projectMeta,
+        target,
+        preview: { who: actor, what: taskTitle, where: projectName },
+        openLabel: openLabelFor(target),
+      };
+    }
     case 'task_assigned': {
       const target: NotificationTarget | undefined = n.payload.taskId
         ? { kind: 'task', taskId: n.payload.taskId }

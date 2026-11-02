@@ -49,3 +49,10 @@ describe('sanitizeNotificationPayload', () => {
     expect(sanitizeNotificationPayload(undefined)).toEqual({});
   });
 });
+
+it('accepts task chat types and preserves server message references', () => {
+  expect(isNotificationType('task_message')).toBe(true);
+  expect(isNotificationType('task_mention')).toBe(true);
+  expect(sanitizeNotificationPayload({ taskId: 't', conversationId: 'c', messageId: 'm', actorId: 'a' }))
+    .toEqual({ taskId: 't', conversationId: 'c', messageId: 'm', actorId: 'a' });
+});
