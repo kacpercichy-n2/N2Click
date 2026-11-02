@@ -102,9 +102,10 @@ export interface ChatMessage {
   pinnedAt: string | null;
   pinnedBy: string | null;
   /**
-   * Rewizja wiersza do scalania wariantów (`messages.revised_at`, gdy L1 ją
-   * doda; do tego czasu null i scalanie używa `editedAt`). Patrz
-   * docs/karta-v2/L3-NEEDS-FROM-L1.md.
+   * Rewizja wiersza do scalania wariantów (`messages.revised_at`: INSERT =
+   * `created_at`, podbijana przez edycję, pin, odpin i kasowanie). Null na
+   * bazie sprzed migracji; scalanie spada wtedy na `editedAt`, potem
+   * `createdAt` (`messageRevision`). „(edytowana)” tylko z `editedAt`.
    */
   revisedAt: string | null;
 }

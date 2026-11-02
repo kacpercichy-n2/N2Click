@@ -25,6 +25,10 @@
 //     „pisze…", paginacja). Wątek żyje, dopóki rozmowa jest otwarta w doku albo
 //     ktoś ją trzyma przez `attachConversation` (panel zadania). Oglądany wątek
 //     liczy się jako przeczytany.
+//   * Ładunek broadcastu NIE jest źródłem prawdy (R1, znalezisko 1): bramka
+//     `chatRealtime.ts` odrzuca zdarzenia obcych rozmów i nie-członków,
+//     a wiadomości, odczyty i reakcje pobiera z bazy pod RLS. Klient nadaje
+//     sam wyłącznie ulotne `typing`.
 //   * Rozmowy zadań są na liście `conversations` (kanały, nieprzeczytane), ale
 //     dok ich nie pokazuje (`dockConversations`), a `totalUnread` ich nie liczy.
 import {
@@ -45,8 +49,8 @@ import {
   createSupabaseChatDb,
   deleteMessage as deleteMessageRow,
   editMessage as editMessageRow,
-  extractBroadcastRecord,
   loadMembers,
+  loadMessagesByIds,
   loadMessagesPage,
   loadMessagesSince,
   loadOverview,
@@ -60,12 +64,14 @@ import {
   setPin as setPinRow,
   setReaction as setReactionRow,
   setTheme as setThemeRow,
-  toChatMessage,
-  toChatReactionEvent,
-  toChatReadEvent,
-  toThemeChangedEvent,
   type ChatDb,
 } from './chatData';
+import {
+  createChatRealtimeGate,
+  type ChatRealtimeEvent,
+  type ChatRealtimeGate,
+  type FetchedMessageEvent,
+} from './chatRealtime';
 import {
   applyConversationMembers,
   applyConversationTheme,
@@ -74,12 +80,13 @@ import {
   applyLocalPin,
   applyMessageUpdate,
   applyReactionEvent,
-  applyReadReceipt,
   applyTypingSignal,
   carryMemberDetails,
   ensureThread,
+  isConversationMember,
   isTaskConversation,
   markConversationRead,
+  messageRevision,
   mergeThreadMessages,
   mergeThreadReactions,
   mergeThreadUpdate,
@@ -107,6 +114,7 @@ import {
   CHAT_TYPING_THROTTLE_MS,
   type ChatConversation,
   type ChatMessageCursor,
+  type ChatReactionMap,
   type ChatSendOptions,
 } from './types';
 
@@ -225,16 +233,6 @@ function readPresenceUserIds(channel: RealtimeChannel): ReadonlySet<string> {
     if (!matched && key !== '') ids.add(key);
   }
   return ids;
-}
-
-/** Nadawca sygnału „pisze…" z ładunku broadcastu (`{ userId }`). */
-function readTypingUserId(raw: unknown): string {
-  if (!raw || typeof raw !== 'object') return '';
-  const envelope = raw as { payload?: unknown };
-  const payload = envelope.payload;
-  if (!payload || typeof payload !== 'object') return '';
-  const userId = (payload as { userId?: unknown }).userId;
-  return typeof userId === 'string' ? userId : '';
 }
 
 /** Klucz zbioru żywych wątków (stabilny string zamiast tablicy w zależnościach). */
@@ -483,45 +481,54 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   // ---- Obsługa zdarzeń kanału -------------------------------------------------
+  //
+  // Ładunek broadcastu jest NIEZAUFANY (R1, znalezisko 1): każdy członek może
+  // nadać dowolne zdarzenie na `chat:conv:<id>`. Kanał oddaje surowe zdarzenia
+  // bramce (`chatRealtime.ts`), która odrzuca obce rozmowy i nie-członków,
+  // a wiadomości, odczyty i reakcje pobiera z bazy. Poniższe funkcje nanoszą
+  // WYŁĄCZNIE wiersze z bazy.
 
-  const handleBroadcast = useCallback(
-    (event: 'INSERT' | 'UPDATE', raw: unknown): void => {
-      const message = toChatMessage(extractBroadcastRecord(raw));
-      if (!message) return;
+  /** Wiadomości pobrane po id (INSERT / UPDATE z kanału). */
+  const applyFetchedMessages = useCallback(
+    (conversationId: string, events: FetchedMessageEvent[]): void => {
       const self = selfIdRef.current;
-      const visible = isVisible(message.conversationId);
-
-      if (event === 'UPDATE') {
-        setConversations((list) => applyMessageUpdate(list, message));
-      } else {
-        const known = conversationsRef.current.some(
-          (conversation) => conversation.id === message.conversationId,
-        );
-        // Wiadomość w rozmowie, której jeszcze nie mamy na liście (ktoś dodał
-        // nas do grupy albo oznaczył w zadaniu): tylko overview wie, co to jest.
-        if (!known) scheduleOverviewRefresh();
+      const visible = isVisible(conversationId);
+      for (const { kind, message } of events) {
+        if (kind === 'UPDATE') {
+          setConversations((list) => applyMessageUpdate(list, message));
+          changeThread(conversationId, (t) => mergeThreadUpdate(t, message));
+          continue;
+        }
+        const conversation = conversationsRef.current.find((c) => c.id === conversationId);
+        // Wiadomość w rozmowie, której jeszcze nie mamy na liście: tylko
+        // overview wie, co to jest.
+        if (!conversation) scheduleOverviewRefresh();
+        const heldInThread =
+          threadsRef.current[conversationId]?.messages.some((m) => m.id === message.id) ?? false;
+        const selfRead = conversation?.members.find((m) => m.userId === self)?.lastReadAt ?? null;
+        const alreadyRead = selfRead !== null && Date.parse(selfRead) >= Date.parse(message.createdAt);
         setConversations((list) =>
           applyIncomingMessage(list, message, {
             selfId: self,
-            openConversationId: visible ? message.conversationId : null,
+            openConversationId: visible ? conversationId : null,
           }),
         );
-        changeThread(message.conversationId, (t) => {
+        changeThread(conversationId, (t) => {
           const typing = removeTyping(t.typing, message.authorId);
           return typing === t.typing ? t : { ...t, typing };
         });
+        changeThread(conversationId, (t) => mergeThreadMessages(t, [message]));
 
         // Ping dźwiękowy: rozmowy zadań milczą (powiadomienia niesie dzwonek L1),
-        // oglądana rozmowa też.
-        const conversation = conversationsRef.current.find((c) => c.id === message.conversationId);
+        // oglądana rozmowa też; znana albo już przeczytana wiadomość też.
         const isTask = conversation ? isTaskConversation(conversation) : false;
-        if (self !== null && !isTask) {
+        if (self !== null && !isTask && !heldInThread && !alreadyRead) {
           const now = Date.now();
           const decision = decideChatPing({
             authorId: message.authorId,
             selfId: self,
-            conversationId: message.conversationId,
-            openConversationId: visible ? message.conversationId : openIdRef.current,
+            conversationId,
+            openConversationId: visible ? conversationId : openIdRef.current,
             documentHidden: typeof document !== 'undefined' && document.hidden,
             enabled: soundEnabledRef.current,
             lastPingAt: lastPingAtRef.current,
@@ -529,69 +536,78 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           });
           if (decision.play && playChatPing(decision.level)) lastPingAtRef.current = now;
         }
-      }
-
-      changeThread(message.conversationId, (t) =>
-        event === 'UPDATE' ? mergeThreadUpdate(t, message) : mergeThreadMessages(t, [message]),
-      );
-      if (event === 'INSERT' && visible && message.authorId !== self) {
-        void markReadFor(message.conversationId, message.createdAt);
+        if (visible && message.authorId !== self && !heldInThread) {
+          void markReadFor(conversationId, message.createdAt);
+        }
       }
     },
     [changeThread, isVisible, markReadFor, scheduleOverviewRefresh],
   );
 
-  const handleReaction = useCallback(
-    (conversationId: string, raw: unknown): void => {
-      const event = toChatReactionEvent(raw);
-      if (!event || event.conversationId !== conversationId) return;
-      changeThread(conversationId, (t) => {
-        const reactions = applyReactionEvent(t.reactions, event);
-        return reactions === t.reactions ? t : { ...t, reactions };
-      });
-    },
-    [changeThread],
-  );
+  /** Bramka zdarzeń kanałów; żyje tyle co klient bazy (patrz efekt cyklu życia). */
+  const gateRef = useRef<ChatRealtimeGate | null>(null);
 
-  const handleRead = useCallback((conversationId: string, raw: unknown): void => {
-    const event = toChatReadEvent(raw);
-    if (!event || event.conversationId !== conversationId) return;
-    setConversations((list) => applyReadReceipt(list, event));
-  }, []);
-
-  const handleThemeChanged = useCallback((conversationId: string, raw: unknown): void => {
-    const event = toThemeChangedEvent(raw);
-    if (!event || event.conversationId !== conversationId) return;
-    setConversations((list) => applyConversationTheme(list, conversationId, event.themeId));
-  }, []);
-
-  const handleTyping = useCallback(
-    (conversationId: string, raw: unknown): void => {
-      const userId = readTypingUserId(raw);
-      if (userId === '' || userId === selfIdRef.current) return;
-      // Wątek istnieje tylko dla oglądanej rozmowy; poza nią sygnał przepada.
-      changeThread(conversationId, (t) => ({
-        ...t,
-        typing: applyTypingSignal(t.typing, userId, Date.now()),
-      }));
-    },
-    [changeThread],
+  const createGate = useCallback(
+    (db: ChatDb): ChatRealtimeGate =>
+      createChatRealtimeGate({
+        selfId: () => selfIdRef.current,
+        isMember: (conversationId, userId) =>
+          isConversationMember(conversationsRef.current, conversationId, userId),
+        hasThread: (conversationId) => threadsRef.current[conversationId] !== undefined,
+        knownRevision: (conversationId, messageId) => {
+          const thread = threadsRef.current[conversationId];
+          const held =
+            thread?.messages.find((m) => m.id === messageId) ??
+            thread?.pinned?.find((m) => m.id === messageId);
+          if (held) return messageRevision(held);
+          const last = conversationsRef.current.find((c) => c.id === conversationId)?.lastMessage;
+          // Podsumowanie listy nie zna rewizji: echo INSERT pomijamy, UPDATE pobieramy.
+          return last && last.id === messageId ? last.createdAt : null;
+        },
+        fetchMessages: (conversationId, ids) => loadMessagesByIds(db, conversationId, ids),
+        fetchMembers: (conversationId) => loadMembers(db, conversationId),
+        fetchReactions: (conversationId, ids) => loadReactions(db, conversationId, ids),
+        onMessages: (conversationId, events) => {
+          if (!mountedRef.current || dbRef.current !== db) return;
+          applyFetchedMessages(conversationId, events);
+        },
+        onMembers: (conversationId, members) => {
+          if (!mountedRef.current || dbRef.current !== db) return;
+          setConversations((list) => applyConversationMembers(list, conversationId, members));
+        },
+        onReactions: (conversationId, reactions) => {
+          if (!mountedRef.current || dbRef.current !== db) return;
+          // Wiadomość z własną reakcją w locie: prawdę przyniesie odpowiedź RPC.
+          const settled: Record<string, ChatReactionMap[string]> = {};
+          for (const [id, list] of Object.entries(reactions)) {
+            if (!pendingReactionsRef.current.has(id)) settled[id] = list;
+          }
+          changeThread(conversationId, (t) => mergeThreadReactions(t, settled));
+        },
+        onThemeHint: () => scheduleOverviewRefresh(),
+        onTyping: (conversationId, userId) => {
+          // Wątek istnieje tylko dla oglądanej rozmowy; poza nią sygnał przepada.
+          changeThread(conversationId, (t) => ({
+            ...t,
+            typing: applyTypingSignal(t.typing, userId, Date.now()),
+          }));
+        },
+      }),
+    [applyFetchedMessages, changeThread, scheduleOverviewRefresh],
   );
 
   const subscribeConversation = useCallback(
     (client: SupabaseClient, conversationId: string): RealtimeChannel => {
+      const forward = (event: ChatRealtimeEvent) => (raw: unknown) =>
+        gateRef.current?.handle(conversationId, event, raw);
       const channel = client
         .channel(`chat:conv:${conversationId}`, { config: { private: true } })
-        .on('broadcast', { event: 'INSERT' }, (raw: unknown) => handleBroadcast('INSERT', raw))
-        .on('broadcast', { event: 'UPDATE' }, (raw: unknown) => handleBroadcast('UPDATE', raw))
-        .on('broadcast', { event: 'read' }, (raw: unknown) => handleRead(conversationId, raw))
-        .on('broadcast', { event: 'typing' }, (raw: unknown) => handleTyping(conversationId, raw))
-        .on('broadcast', { event: 'reaction' }, (raw: unknown) =>
-          handleReaction(conversationId, raw),
-        )
-        .on('broadcast', { event: 'theme_changed' }, (raw: unknown) =>
-          handleThemeChanged(conversationId, raw),
-        );
+        .on('broadcast', { event: 'INSERT' }, forward('INSERT'))
+        .on('broadcast', { event: 'UPDATE' }, forward('UPDATE'))
+        .on('broadcast', { event: 'read' }, forward('read'))
+        .on('broadcast', { event: 'typing' }, forward('typing'))
+        .on('broadcast', { event: 'reaction' }, forward('reaction'))
+        .on('broadcast', { event: 'theme_changed' }, forward('theme_changed'));
       channel.subscribe((status: string) => {
         if (status !== 'SUBSCRIBED') return;
         // KAŻDY `SUBSCRIBED`, także pierwszy: wiadomość nadana między snapshotem
@@ -601,15 +617,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
       return channel;
     },
-    [
-      handleBroadcast,
-      handleRead,
-      handleTyping,
-      handleReaction,
-      handleThemeChanged,
-      scheduleOverviewRefresh,
-      catchUpThread,
-    ],
+    [scheduleOverviewRefresh, catchUpThread],
   );
 
   // ---- Cykl życia: klient, presence, pierwsze wczytanie -----------------------
@@ -638,6 +646,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const client = getSupabaseClient();
     const db = createSupabaseChatDb(client);
     dbRef.current = db;
+    const gate = createGate(db);
+    gateRef.current = gate;
     let cancelled = false;
     setConversationsLoading(true);
 
@@ -690,9 +700,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         void client.removeChannel(selfChannelRef.current);
         selfChannelRef.current = null;
       }
+      gate.dispose();
+      if (gateRef.current === gate) gateRef.current = null;
       dbRef.current = null;
     };
-  }, [active, selfId, refreshOverview, scheduleOverviewRefresh]);
+  }, [active, selfId, refreshOverview, scheduleOverviewRefresh, createGate]);
 
   // Uzgodnienie kanałów z listą rozmów (klucz = ZBIÓR id, nie każda wiadomość).
   const conversationIdsKey = useMemo(
@@ -1110,7 +1122,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const channel = channelsRef.current.get(conversationId);
     if (!channel) return;
     lastTypingSentRef.current.set(conversationId, now);
-    void channel.send({ type: 'broadcast', event: 'typing', payload: { userId: self } });
+    void channel.send({
+      type: 'broadcast',
+      event: 'typing',
+      payload: { userId: self, conversationId },
+    });
   }, []);
 
   const refresh = useCallback((): void => {

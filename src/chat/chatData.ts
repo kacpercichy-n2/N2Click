@@ -74,6 +74,15 @@ export interface ChatDb {
   setFollow?(conversationId: string, follow: boolean): Promise<{ error: ChatDbError | null }>;
   /** Przypięte, nieusunięte wiadomości rozmowy (indeks `messages_pinned`). */
   selectPinned?(conversationId: string): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
+  /**
+   * Wiadomości jednej rozmowy po id (RLS). Realtime niesie tylko PODPOWIEDŹ
+   * „ten wiersz się zmienił”; renderujemy wyłącznie to, co zwróci ten select
+   * (R1, znalezisko 1).
+   */
+  selectMessagesByIds?(
+    conversationId: string,
+    messageIds: string[],
+  ): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
   /** Członkowie jednej rozmowy z `muted_until` (overview tej kolumny nie niesie). */
   selectMembers?(conversationId: string): Promise<{ rows: ChatRow[]; error: ChatDbError | null }>;
 
@@ -192,6 +201,20 @@ export function createSupabaseChatDb(client: SupabaseClient): ChatDb {
           .is('deleted_at', null)
           .order('pinned_at', { ascending: false })
           .limit(CHAT_PINNED_LIMIT);
+        if (error) return { rows: [], error: toDbError(error, 'Błąd zapytania.') };
+        return { rows: rows(data), error: null };
+      } catch (e) {
+        return { rows: [], error: toDbError(e, 'Błąd zapytania.') };
+      }
+    },
+    async selectMessagesByIds(conversationId, messageIds) {
+      if (messageIds.length === 0) return { rows: [], error: null };
+      try {
+        const { data, error } = await client
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', conversationId)
+          .in('id', messageIds);
         if (error) return { rows: [], error: toDbError(error, 'Błąd zapytania.') };
         return { rows: rows(data), error: null };
       } catch (e) {
@@ -900,6 +923,41 @@ export async function loadMembers(
   const { rows, error } = await db.selectMembers(conversationId);
   if (error) return { ok: false, error: CHAT_MESSAGES.load };
   return { ok: true, value: rows.map(toChatMember).filter((m): m is ChatMember => m !== null) };
+}
+
+/** Najwięcej id w jednym `in(...)` (długość URL-a PostgREST). */
+export const CHAT_REFETCH_CHUNK = 50;
+
+/**
+ * Autorytatywne wiersze wskazanych wiadomości JEDNEJ rozmowy. Wiersz z innej
+ * rozmowy albo spoza listy id jest odrzucany także po stronie klienta (obrona
+ * w głąb; RLS i filtr zapytania i tak go nie przepuszczą). Brak wiersza =
+ * wiadomość nie istnieje albo nie mamy do niej wglądu: nic nie pokazujemy.
+ */
+export async function loadMessagesByIds(
+  db: ChatDb,
+  conversationId: string,
+  messageIds: readonly string[],
+): Promise<ChatResult<ChatMessage[]>> {
+  const ids = Array.from(new Set(messageIds.filter((id) => id !== '')));
+  if (!db.selectMessagesByIds || conversationId === '') {
+    return { ok: false, error: CHAT_MESSAGES.messages };
+  }
+  if (ids.length === 0) return { ok: true, value: [] };
+  const wanted = new Set(ids);
+  const messages: ChatMessage[] = [];
+  for (let start = 0; start < ids.length; start += CHAT_REFETCH_CHUNK) {
+    const chunk = ids.slice(start, start + CHAT_REFETCH_CHUNK);
+    const { rows, error } = await db.selectMessagesByIds(conversationId, chunk);
+    if (error) return { ok: false, error: CHAT_MESSAGES.messages };
+    for (const row of rows) {
+      const message = toChatMessage(row);
+      if (message && message.conversationId === conversationId && wanted.has(message.id)) {
+        messages.push(message);
+      }
+    }
+  }
+  return { ok: true, value: messages };
 }
 
 /** Wynik otwarcia rozmowy zadania; `forbidden` = brak wglądu (bez ponowień). */

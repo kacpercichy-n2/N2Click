@@ -84,10 +84,20 @@ export function applyIncomingMessage(
   const isNewer =
     !conversation.lastMessageAt ||
     compareTimestamps(message.createdAt, conversation.lastMessageAt) >= 0;
+  // Wiadomość nie późniejsza niż nasz znacznik odczytu jest już przeczytana
+  // (powtórka zdarzenia ze starym id nie może podbić licznika).
+  const selfMember = context.selfId
+    ? conversation.members.find((member) => member.userId === context.selfId)
+    : undefined;
+  const alreadyRead =
+    selfMember !== undefined &&
+    selfMember.lastReadAt !== null &&
+    timestampMs(selfMember.lastReadAt) >= timestampMs(message.createdAt);
   const countsAsUnread =
     message.conversationId !== context.openConversationId &&
     message.authorId !== context.selfId &&
-    message.deletedAt === null;
+    message.deletedAt === null &&
+    !alreadyRead;
 
   const next: ChatConversation = {
     ...conversation,
@@ -197,28 +207,30 @@ export function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]):
 /**
  * Nowszy wariant tej samej wiadomości. Kasowanie miękkie jest TERMINALNE
  * (modelu „odkasowania" nie ma), więc wariant z `deletedAt` wygrywa zawsze.
- * Poza tym rozstrzyga ŚCIŚLE późniejszy `editedAt`, a REMIS zostawia wariant
- * już posiadany. Remis jest bezpieczny wyłącznie dzięki serwerowej gwarancji:
- * trigger `chat_messages_stamp_edit` (20260813200000) podbija `edited_at`
- * z zegara Postgresa przy KAŻDEJ zmianie `body`, więc identyczna rewizja =
- * identyczna treść — bez tej gwarancji remis był nierozstrzygalny (dowolny
- * wybór cofał edycję starym snapshotem albo ją ignorował). Znaczniki zawsze
- * z Postgresa, więc porównanie leksykalne jest poprawne.
+ * Poza tym rozstrzyga ŚCIŚLE późniejsza rewizja (`messageRevision`), a REMIS
+ * zostawia wariant już posiadany. Remis jest bezpieczny wyłącznie dzięki
+ * serwerowej gwarancji: `revised_at` (BACKLOG 1) podbija baza przy KAŻDEJ
+ * zmianie wiersza (edycja, przypięcie, odpięcie, kasowanie), więc identyczna
+ * rewizja = identyczny wiersz. Znaczniki zawsze z Postgresa, więc porównanie
+ * leksykalne jest poprawne.
  */
 function newerMessageVariant(previous: ChatMessage, incoming: ChatMessage): ChatMessage {
   if (previous.deletedAt !== null || incoming.deletedAt !== null) {
     return previous.deletedAt !== null ? previous : incoming;
   }
-  return messageRevision(incoming) > messageRevision(previous) ? incoming : previous;
+  return compareTimestamps(messageRevision(incoming), messageRevision(previous)) > 0
+    ? incoming
+    : previous;
 }
 
 /**
- * Rewizja wariantu: `revisedAt` (gdy L1 doda kolumnę podbijaną przy KAŻDEJ
- * zmianie, także przypięciu), inaczej `editedAt`. Szkic L1 podbija `edited_at`
- * przy przypięciu, więc obie drogi dają monotoniczną rewizję.
+ * Rewizja wariantu do scalania: `revisedAt`, a przed migracją `revised_at`
+ * (baza bez kolumny) `editedAt` (stary szkic podbijał go też przy przypięciu),
+ * a dla nigdy niezmienionego wiersza `createdAt`. Etykietę „(edytowana)”
+ * wolno brać WYŁĄCZNIE z `editedAt` (zmiana treści), nigdy z rewizji.
  */
-function messageRevision(message: ChatMessage): string {
-  return message.revisedAt ?? message.editedAt ?? '';
+export function messageRevision(message: ChatMessage): string {
+  return message.revisedAt ?? message.editedAt ?? message.createdAt;
 }
 
 function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
@@ -486,6 +498,21 @@ function timestampMs(value: string | null | undefined): number {
   if (!value) return Number.NEGATIVE_INFINITY;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * Czy osoba należy do rozmowy według ostatniego autorytatywnego składu
+ * (overview albo select członków). Zdarzenia realtime od nie-członków
+ * odrzucamy (R1, znalezisko 1).
+ */
+export function isConversationMember(
+  list: readonly ChatConversation[],
+  conversationId: string,
+  userId: string,
+): boolean {
+  if (conversationId === '' || userId === '') return false;
+  const conversation = list.find((c) => c.id === conversationId);
+  return conversation !== undefined && conversation.members.some((m) => m.userId === userId);
 }
 
 /**
@@ -778,7 +805,8 @@ export function setThreadPinned(thread: ChatThreadState, pinned: ChatMessage[]):
 
 /**
  * Lokalne naniesienie przypięcia po udanym RPC (broadcast mógł przepaść).
- * Rewizja (`editedAt`) zostaje stara, więc prawdziwy UPDATE z serwera i tak
+ * Rewizja (`revisedAt`, przed migracją `editedAt`) zostaje stara, a `editedAt`
+ * nie rośnie (przypięcie to nie edycja treści), więc prawdziwy UPDATE z serwera i tak
  * wygra przy scalaniu.
  */
 export function applyLocalPin(
