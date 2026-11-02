@@ -293,8 +293,13 @@ export function previewText(
   const last = conversation.lastMessage;
   if (!last) return 'Brak wiadomości';
   const body = last.deletedAt !== null ? 'Wiadomość usunięta' : last.body.trim();
+  const images = last.attachmentsCount ?? 0;
   const text =
-    body === ''
+    body === '' && last.deletedAt === null && images > 0
+      ? images === 1
+        ? 'Obraz'
+        : `Obrazy (${images})`
+      : body === ''
       ? 'Wiadomość usunięta'
       : last.deletedAt === null && messageContentKind(body) === 'gif'
         ? 'GIF'

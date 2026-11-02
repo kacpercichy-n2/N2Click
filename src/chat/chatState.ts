@@ -99,6 +99,7 @@ export function applyIncomingMessage(
           kind: message.kind,
           createdAt: message.createdAt,
           deletedAt: message.deletedAt,
+          attachmentsCount: message.attachments.length,
         }
       : conversation.lastMessage,
     lastMessageAt: isNewer ? message.createdAt : conversation.lastMessageAt,
@@ -230,6 +231,21 @@ function sameMessage(a: ChatMessage, b: ChatMessage): boolean {
     a.pinnedBy === b.pinnedBy &&
     a.revisedAt === b.revisedAt
   );
+}
+
+/**
+ * Znacznik odczytu: zegar klienta, ale nie wcześniej niż najnowsza wczytana
+ * wiadomość. Zegar urządzenia spóźniony względem serwera zostawiłby inaczej
+ * świeżą wiadomość „nieprzeczytaną” (licznik, „Widziane przez”). Przyszłość
+ * przycina trigger `chat_clamp_last_read` po stronie bazy.
+ */
+export function readWatermark(
+  messages: readonly Pick<ChatMessage, 'createdAt'>[],
+  nowIso: string,
+): string {
+  const newest = messages.length > 0 ? messages[messages.length - 1].createdAt : null;
+  if (newest === null) return nowIso;
+  return Date.parse(newest) > Date.parse(nowIso) ? newest : nowIso;
 }
 
 /** Kursor najnowszej znanej wiadomości — punkt startu nadrabiania luki. */

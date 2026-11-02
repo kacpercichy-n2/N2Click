@@ -55,6 +55,8 @@ export interface ChatLastMessage {
   createdAt: string;
   /** Znacznik miękkiego usunięcia; UI pokazuje wtedy „Wiadomość usunięta". */
   deletedAt: string | null;
+  /** Liczba obrazów (`attachments_count` z overview); 0 gdy brak lub nieznana. */
+  attachmentsCount?: number;
 }
 
 export interface ChatConversation {

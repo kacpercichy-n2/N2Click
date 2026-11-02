@@ -84,6 +84,7 @@ import {
   nextReactionIntent,
   patchThread,
   pruneTyping,
+  readWatermark,
   removeTyping,
   retainThreads,
   sortConversations,
@@ -347,11 +348,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }, OVERVIEW_REFRESH_DEBOUNCE_MS);
   }, [refreshOverview]);
 
-  const markReadFor = useCallback(async (conversationId: string): Promise<void> => {
+  const markReadFor = useCallback(
+    async (conversationId: string, newestCreatedAt: string | null = null): Promise<void> => {
     const db = dbRef.current;
     const self = selfIdRef.current;
     if (!db || !self || conversationId === '') return;
-    const at = new Date().toISOString();
+    // Ref wątku może jeszcze nie znać wiadomości z tego samego zdarzenia, więc
+    // wołający podaje jej znacznik wprost.
+    const known = threadsRef.current[conversationId]?.messages ?? [];
+    const now = readWatermark(known, new Date().toISOString());
+    const at = newestCreatedAt !== null ? readWatermark([{ createdAt: newestCreatedAt }], now) : now;
     setConversations((list) => markConversationRead(list, conversationId, self, at));
     // Błąd zapisu zostawiamy cichy: kolejne overview przywróci prawdę serwera,
     // a baner „nie zapisano odczytu” byłby szumem przy każdym przełączeniu.
@@ -378,7 +384,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         ),
       );
       olderCursorsRef.current.set(conversationId, result.value.cursor);
-      void markReadFor(conversationId);
+      void markReadFor(conversationId, newestMessageCursor(result.value.messages)?.createdAt ?? null);
     },
     [changeThread, markReadFor, threadAlive],
   );
@@ -407,7 +413,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             patchThread(t, { hasMore: result.value.hasMore, loaded: true, loading: false }),
           );
         }
-        void markReadFor(conversationId);
+        void markReadFor(conversationId, newestMessageCursor(result.value.messages)?.createdAt ?? null);
         return;
       }
       // PĘTLA, nie jedno pobranie: przerwa bywa dłuższa niż strona, a dziury
@@ -423,8 +429,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         changeThread(conversationId, (t) =>
           mergeThreadReactions(mergeThreadMessages(t, result.value.messages), result.value.reactions),
         );
-        if (result.value.messages.length < CHAT_PAGE_SIZE) break;
         const advanced = newestMessageCursor(result.value.messages);
+        if (result.value.messages.length < CHAT_PAGE_SIZE) {
+          next = advanced ?? next;
+          break;
+        }
         if (!advanced || (next && advanced.id === next.id)) break;
         next = advanced;
         saturated = page === CHAT_CATCHUP_MAX_PAGES - 1;
@@ -443,11 +452,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           loading: false,
         }));
         olderCursorsRef.current.set(conversationId, fresh.value.cursor);
-        void markReadFor(conversationId);
+        void markReadFor(conversationId, newestMessageCursor(fresh.value.messages)?.createdAt ?? null);
         return;
       }
 
-      if (appended) void markReadFor(conversationId);
+      if (appended) void markReadFor(conversationId, next?.createdAt ?? null);
 
       // Reakcje na JUŻ WCZYTANYCH wiadomościach (broadcast w martwym oknie przepadł).
       const known = (threadsRef.current[conversationId]?.messages ?? []).map((m) => m.id);
@@ -509,7 +518,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       changeThread(message.conversationId, (t) => mergeThreadMessages(t, [message]));
       if (event === 'INSERT' && visible && message.authorId !== self) {
-        void markReadFor(message.conversationId);
+        void markReadFor(message.conversationId, message.createdAt);
       }
     },
     [changeThread, isVisible, markReadFor, scheduleOverviewRefresh],

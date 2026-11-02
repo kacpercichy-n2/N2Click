@@ -368,6 +368,7 @@ export function toChatLastMessage(value: unknown): ChatLastMessage | null {
     kind: isChatMessageKind(row.kind) ? row.kind : 'text',
     createdAt,
     deletedAt: nullableStr(row.deleted_at),
+    ...('attachments_count' in row ? { attachmentsCount: count(row.attachments_count) } : {}),
   };
 }
 

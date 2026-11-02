@@ -16,6 +16,7 @@ import {
   mergeThreadMessages,
   patchThread,
   pinnedMessages,
+  readWatermark,
   retainThreads,
   seenByMessage,
   taskConversationUnread,
@@ -36,6 +37,8 @@ import {
   type ChatDb,
 } from './chatData';
 import { CHAT_MESSAGES, type ChatConversation, type ChatMessage } from './types';
+import { previewText } from './ui/chatDockView';
+import { buildDirectory } from './ui/chatPeople';
 
 const row = {
   id: 'm',
@@ -433,5 +436,31 @@ describe('mapa wątków (dok + panel zadania naraz)', () => {
     const thread = { ...EMPTY_THREAD, loading: true };
     expect(patchThread(thread, { loading: true })).toBe(thread);
     expect(patchThread(thread, { loading: false, loaded: true })).toMatchObject({ loading: false, loaded: true });
+  });
+});
+
+describe('odczyt i podgląd obrazów w doku', () => {
+  it('watermark odczytu nie jest wcześniejszy niż najnowsza wiadomość', () => {
+    const now = '2026-11-02T10:00:00.000Z';
+    expect(readWatermark([], now)).toBe(now);
+    expect(readWatermark([{ createdAt: '2026-11-02T09:59:00+00:00' }], now)).toBe(now);
+    expect(readWatermark([{ createdAt: '2026-11-02T10:00:05.123456+00:00' }], now)).toBe(
+      '2026-11-02T10:00:05.123456+00:00',
+    );
+  });
+
+  it('wiadomość z samym obrazem nie udaje usuniętej na liście doku', () => {
+    const c = toChatConversation({
+      id: 'c',
+      kind: 'direct',
+      last_message: { id: 'm', author_id: 'b', body: '', kind: 'text', attachments_count: 2, created_at: row.created_at, deleted_at: null },
+    })!;
+    expect(c.lastMessage?.attachmentsCount).toBe(2);
+    const directory = buildDirectory([]);
+    expect(previewText(c, 'self', directory)).toBe('Obrazy (2)');
+    const one = { ...c, lastMessage: { ...c.lastMessage!, attachmentsCount: 1 } };
+    expect(previewText(one, 'self', directory)).toBe('Obraz');
+    const removed = { ...c, lastMessage: { ...c.lastMessage!, deletedAt: row.created_at } };
+    expect(previewText(removed, 'self', directory)).toBe('Wiadomość usunięta');
   });
 });
