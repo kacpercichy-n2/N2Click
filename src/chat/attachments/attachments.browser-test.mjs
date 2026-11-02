@@ -1,0 +1,33 @@
+import { chromium } from '/Users/kacpercichy/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/index.mjs';
+import assert from 'node:assert/strict';
+const browser = await chromium.launch({ channel: 'chrome' });
+try {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('http://localhost:5182/src/chat/attachments/attachments.story.html');
+  const thumb = page.getByRole('button', { name: 'Otwórz Projekt 1', exact: true });
+  await thumb.click();
+  await page.getByRole('dialog').waitFor();
+  await page.keyboard.press('ArrowRight');
+  await page.getByRole('dialog').getByText('2 / 6: Projekt 2').waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Otwórz Projekt 1');
+  const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a8a8AAAAASUVORK5CYII=', 'base64');
+  await page.getByLabel('Dodaj obrazy', { exact: true }).setInputFiles([{ name: 'retry.png', mimeType: 'image/png', buffer: bytes }]);
+  await page.getByRole('button', { name: 'Ponów wysyłanie retry.png' }).click();
+  await page.getByTestId('queue-state').filter({ hasText: '1:true:1' }).waitFor();
+  await page.getByRole('button', { name: 'Usuń retry.png' }).click();
+  await page.getByTestId('queue-state').filter({ hasText: '0:true:0' }).waitFor();
+  await page.getByLabel('Dodaj obrazy', { exact: true }).setInputFiles(Array.from({ length: 11 }, (_, i) => ({ name: `${i}.png`, mimeType: 'image/png', buffer: bytes })));
+  await page.getByRole('status').getByText('Możesz dodać maksymalnie 10 obrazów do wiadomości.').waitFor();
+  await page.getByRole('button', { name: 'Wyczyść', exact: true }).click();
+  await page.getByLabel('Dodaj obrazy', { exact: true }).setInputFiles([{ name: 'slow.png', mimeType: 'image/png', buffer: bytes }]);
+  await page.getByRole('button', { name: 'Zmień rozmowę' }).click();
+  await page.getByTestId('queue-state').filter({ hasText: '0:true:0' }).waitFor();
+  await page.waitForTimeout(200);
+  assert.equal(await page.getByTestId('queue-state').textContent(), '0:true:0', 'stale upload ignored');
+  assert.deepEqual(errors, []);
+  console.log('PASS: lightbox arrows, Escape, focus return, retry, remove, limit, conversation cleanup; reduced motion 390px.');
+} finally { await browser.close(); }
