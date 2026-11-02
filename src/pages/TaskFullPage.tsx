@@ -10,6 +10,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useStore, usePersistence } from '../store/AppStore';
 import { useCan } from '../store/useCan';
+import { Copy, X } from 'lucide-react';
+import { IconButton } from '../components/IconButton';
 import { OverflowMenu } from '../components/OverflowMenu';
 import { SaveStatus } from '../components/SaveStatus';
 import { TaskEditor, useDeleteTaskConfirm, useDuplicateTask } from '../components/TaskModal';
@@ -105,9 +107,9 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
   }, [backToList]);
 
   return (
-    <section className="page editor">
+    <section className="page editor task-card-page">
       <div className="page-head">
-        <h1>{title}</h1>
+        <div id="task-card-breadcrumb" /><h1 className="sr-only">{title}</h1>
         <div className="page-head-actions">
           <SaveStatus
             status={status}
@@ -122,6 +124,8 @@ function TaskFullView({ taskId, title }: { taskId: string; title: string }) {
                 : undefined
             }
           />
+          <IconButton icon={<Copy size={18} aria-hidden />} label="Kopiuj link" onClick={() => { void navigator.clipboard.writeText(window.location.href); }} />
+          <IconButton icon={<X size={18} aria-hidden />} label="Wróć do listy zadań" onClick={backToList} />
           {canManageTasks && (
             <OverflowMenu
               label="Więcej działań"

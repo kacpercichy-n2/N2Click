@@ -1,9 +1,8 @@
-// Task popout modal. Opening a task never leaves the current page — it renders
+// Task popout modal. Opening a task never leaves the current page · it renders
 // as an overlay driven by the `?task=<id>` (or `?task=new[&project=<id>]`)
 // search params. Rendered ONCE at App level. Closing removes the task/project
 // params while keeping the rest of the URL (and the page's scroll) intact.
 import {
-  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -42,7 +41,11 @@ import { buildDeleteConsequence } from './confirmDialog';
 import { IconButton } from './IconButton';
 import { OverflowMenu } from './OverflowMenu';
 import { X } from './icons';
-import { CommentsPanel } from './CommentsPanel';
+import { TaskConversationPane } from '../chat/ui/TaskConversationPane';
+import { TaskTile, TaskReadText, TaskConversationEmpty } from './taskCard/TaskCardParts';
+import { taskHoursRows } from './taskCard/taskCardSummary';
+import { createPortal } from 'react-dom';
+import { Copy, Maximize2, ChevronRight, CalendarDays } from 'lucide-react';
 import {
   AllocationGrid,
   allocKey,
@@ -102,15 +105,10 @@ import {
   type SaveBlockerId,
 } from './taskSaveBlockers';
 import {
-  initialTab,
   opensAtTop,
-  resolveTabNavKey,
   visibleSections,
-  visibleTabs,
   type SectionFlags,
   type TaskModalSectionId,
-  type TaskModalTab,
-  type TaskModalTabId,
 } from './taskModalSections';
 import { Field, focusFieldById } from './Field';
 import type { FieldControlProps } from './Field';
@@ -152,7 +150,7 @@ function recurDateLabel(date: string): string {
   return `${d}.${m}.${y}`;
 }
 
-// IA-12 — nieudany zapis musi mieć widoczny skutek. Skacze do pola, które
+// IA-12 · nieudany zapis musi mieć widoczny skutek. Skacze do pola, które
 // blokuje zapis (i ustawia na nim fokus), zamiast po cichu nic nie robić.
 // Modal jest jednym DOM-em, więc korzysta z tego zarówno stopka edytora, jak i
 // klikalna odznaka zapisu w nagłówku.
@@ -176,7 +174,7 @@ export function useOpenTask() {
       const params = new URLSearchParams(location.search);
       params.set('task', id);
       params.delete('project');
-      // Prefill hints only apply to new-task creation — never leak onto an
+      // Prefill hints only apply to new-task creation · never leak onto an
       // existing task opened afterwards.
       params.delete('date');
       params.delete('assignee');
@@ -255,7 +253,7 @@ export function TaskModal() {
  * JEDEN przepływ usuwania zadania dla modala i pełnej strony `/tasks/:id`
  * (IA-15). Wcześniej mieszkał w ciele `TaskModalShell`; wyjęty tutaj, żeby
  * strona nie dorobiła się drugiej, rozjeżdżającej się kopii pytania.
- * Zwraca `true`, gdy zadanie NAPRAWDĘ zostało usunięte — nawigacja po
+ * Zwraca `true`, gdy zadanie NAPRAWDĘ zostało usunięte · nawigacja po
  * usunięciu należy do wywołującego (modal się zamyka, strona wraca na listę).
  */
 export function useDeleteTaskConfirm(taskId: string | null): () => Promise<boolean> {
@@ -289,7 +287,7 @@ export function useDeleteTaskConfirm(taskId: string | null): () => Promise<boole
 
 /**
  * JEDEN przepływ duplikowania zadania dla modala i pełnej strony `/tasks/:id`
- * (zgłoszenie 2026-08-06) — lustro wzorca `useDeleteTaskConfirm`. Generuje id
+ * (zgłoszenie 2026-08-06) · lustro wzorca `useDeleteTaskConfirm`. Generuje id
  * kopii PO STRONIE UI (reduktor go waliduje), żeby wywołujący mógł od razu
  * otworzyć kopię do edycji. Zwraca id kopii albo `null` (nieznane zadanie).
  */
@@ -353,7 +351,7 @@ function TaskModalShell({
   }, []);
   const { saveError } = usePersistence();
   const { status, savedAtLabel, markSaved } = useSaveStatus(dirty, saveError !== null);
-  // IA-12 — powody, dla których zapis nie przejdzie. Edytor je liczy, nagłówek
+  // IA-12 · powody, dla których zapis nie przejdzie. Edytor je liczy, nagłówek
   // pokazuje je na odznace zapisu (klik = skok do przyczyny).
   const [blockers, setBlockers] = useState<SaveBlocker[]>([]);
   // Skok do przyczyny musi najpierw przełączyć zakładkę edytora (kotwice pól
@@ -398,13 +396,13 @@ function TaskModalShell({
   }, [closeDeliberately, confirm]);
 
   // Escape (z pytaniem o niezapisane zmiany), pułapka fokusa, powrót fokusa po
-  // zamknięciu i blokada scrolla — wszystko we wspólnej powłoce modala.
+  // zamknięciu i blokada scrolla · wszystko we wspólnej powłoce modala.
   const titleId = useId();
   const { cardRef, cardProps, viewportProps } = useModalShell({
     onRequestClose: requestClose,
     labelledBy: titleId,
     // Modal z formularzem: klik obok karty NIGDY nie zamyka (Escape i przyciski
-    // zostają — ze strażnikiem niezapisanych zmian).
+    // zostają · ze strażnikiem niezapisanych zmian).
     closeOnBackdrop: false,
   });
 
@@ -427,7 +425,7 @@ function TaskModalShell({
   // 0, ale `.task-modal-body` PRZEŻYWA zmianę `?task=` (remontuje się tylko
   // `TaskEditor`, przez `key`), więc przejście na inne zadanie przy przewiniętym
   // modalu wpadało w środek nowego formularza. Efekt układu (przed malowaniem)
-  // — żeby nie było widocznego skoku. Deep-link do bloku jest wyłączony z tej
+  // · żeby nie było widocznego skoku. Deep-link do bloku jest wyłączony z tej
   // reguły: tam wygrywa `scrollIntoView` podświetlanego wiersza.
   const bodyRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -459,7 +457,7 @@ function TaskModalShell({
       <div className="task-modal-viewport" {...viewportProps}>
         <m.div
           ref={cardRef}
-          className="task-modal-card"
+          className="task-modal-card task-card-modal"
           {...cardProps}
           initial={{ opacity: 0, scale: 0.96, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -467,7 +465,8 @@ function TaskModalShell({
           transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         >
           <div className="task-modal-head">
-            <h1 className="task-modal-title" id={titleId}>
+            <div id="task-card-breadcrumb" />
+            <h1 className="sr-only" id={titleId}>
               {heading}
             </h1>
             <div className="task-modal-head-actions">
@@ -486,16 +485,17 @@ function TaskModalShell({
                   }
                 />
               )}
-              {/* IA-15 — wyjście z ciasnego modala do pełnej strony zadania.
+              {/* IA-15 · wyjście z ciasnego modala do pełnej strony zadania.
                   Zwykły `<Link>`: nawigacja zmienia ŚCIEŻKĘ, więc parametr
                   `?task=` znika sam, a przy niezapisanych zmianach pyta
                   strażnik routera (zakres `task-modal`). */}
+              {existing && <IconButton icon={<Copy size={18} aria-hidden />} label="Kopiuj link" onClick={() => { void navigator.clipboard.writeText(new URL(taskFullViewPath(existing.id), window.location.origin).href); }} />}
               {existing && (
                 <Link className="link-btn" to={taskFullViewPath(existing.id)}>
-                  Otwórz pełny widok ↗
+                  <Maximize2 size={18} aria-hidden /><span className="sr-only">Otwórz pełny widok</span>
                 </Link>
               )}
-              {/* AT-08 — akcja niszcząca zeszła z nagłówka do menu „⋯": czerwony
+              {/* AT-08 · akcja niszcząca zeszła z nagłówka do menu „⋯": czerwony
                   przycisk stał tuż obok „Zamknij" i był pierwszą rzeczą, w którą
                   wpadało oko. Sam przepływ potwierdzenia (skutki + `requireAck`)
                   jest BEZ ZMIAN. */}
@@ -569,7 +569,7 @@ export interface EditorProps {
   onSaved: () => void;
   onCancel: () => void;
   onDirtyChange: (dirty: boolean) => void;
-  /** IA-12 — aktualne powody blokujące zapis (dla odznaki w nagłówku) razem ze
+  /** IA-12 · aktualne powody blokujące zapis (dla odznaki w nagłówku) razem ze
    *  skokiem do przyczyny: ten przełącza zakładkę PRZED ustawieniem fokusa. */
   onBlockersChange: (blockers: SaveBlocker[], jump: (blocker: SaveBlocker) => void) => void;
   markSaved: () => void;
@@ -610,12 +610,12 @@ function serializeDraft(v: {
     allocations: Object.entries(v.allocations)
       .filter(([, h]) => h > 0)
       .sort(([a], [b]) => a.localeCompare(b)),
-    // Przypięte godziny startu — tylko dla komórek z godzinami > 0 (pin bez
+    // Przypięte godziny startu · tylko dla komórek z godzinami > 0 (pin bez
     // godzin nie jedzie w ładunku, więc nie może brudzić edytora).
     startTimes: Object.entries(v.startTimes)
       .filter(([key]) => (v.allocations[key] ?? 0) > 0)
       .sort(([a], [b]) => a.localeCompare(b)),
-    // Godziny sprzedane per osoba — tylko aktualnie przypisani (odpięcie osoby
+    // Godziny sprzedane per osoba · tylko aktualnie przypisani (odpięcie osoby
     // nie zostawia widma w dirty-detekcji).
     sold: v.assigneeIds
       .map((pid) => [pid, (v.soldRawByPerson[pid] ?? '').trim()] as const)
@@ -653,7 +653,7 @@ export function TaskEditor({
   const isBoard = isBoardMember(state);
   const readOnly = !canManage || contentMasked;
   // Telefon (≤ 760 px) dostaje pionową LISTĘ dni zamiast 480-pikselowej tabeli
-  // przydziału — ten sam breakpoint, co dolny pasek zakładek i widok dnia.
+  // przydziału · ten sam breakpoint, co dolny pasek zakładek i widok dnia.
   // Hook stoi wśród pozostałych, PRZED jakimkolwiek wcześniejszym wyjściem.
   const isMobileNav = useMediaQuery(MOBILE_NAV_QUERY);
   // Brak uprawnień: JEDEN ukryty opis na modal zamiast kilkunastu natywnych
@@ -661,7 +661,7 @@ export function TaskEditor({
   // doklejają się do KAŻDEJ kontrolki osobno). Kontrolki tylko-do-odczytu
   // wskazują go przez `aria-describedby`.
   const roDescId = 'task-ro-reason';
-  /** Zapis/publikacja bez ani jednego projektu jest niemożliwa — powód musi być
+  /** Zapis/publikacja bez ani jednego projektu jest niemożliwa · powód musi być
    *  czytelny także wtedy, gdy przycisk jest wyłączony natywnie. */
   const noProjectReason = state.projects.length === 0 ? 'Najpierw utwórz projekt' : null;
   /** WIDOCZNA podpowiedź o godzinie startu opisuje pola godziny w siatce —
@@ -677,7 +677,7 @@ export function TaskEditor({
   const isEdit = Boolean(existing);
   // Szkic: NOWE zadanie otwarte Z WIDOKU PROJEKTU (initialProjectId ustawione)
   // startuje jako szkic; edycja zachowuje stan zadania. Bezpośrednie tworzenie
-  // gdzie indziej (Zadania, kalendarz, kanban — bez projektu) pozostaje
+  // gdzie indziej (Zadania, kalendarz, kanban · bez projektu) pozostaje
   // publikacją natychmiastową. Szkic nie planuje godzin, więc chowamy sekcje
   // planowania (godziny osób, zasobnik, siatka) do czasu publikacji.
   const isDraft = existing ? existing.isDraft === true : Boolean(initialProjectId);
@@ -696,7 +696,7 @@ export function TaskEditor({
   // listę. Zadanie NIE ma własnego clientId (klient wynika z projektu), więc
   // „przepisanie" klienta = wybór projektu u innego klienta; sam wybór klienta
   // niczego nie zapisuje. Stan startowy wynika z projektu zadania (fallback:
-  // pierwszy projekt alfabetycznie — listy sortuje kolacja pl).
+  // pierwszy projekt alfabetycznie · listy sortuje kolacja pl).
   const [projectId, setProjectId] = useState(
     () => existing?.projectId ?? initialProjectId ?? sortByNamePl(state.projects)[0]?.id ?? '',
   );
@@ -750,35 +750,34 @@ export function TaskEditor({
   // ---- Zakładki + sekcje zwijane (PKG-20260728-taskmodal-structure) ----
   // Kolejność i widoczność sekcji liczy CZYSTY `taskModalSections.ts`; tutaj
   // zostaje wyłącznie stan wyboru zakładki i dwa przełączniki zwijania.
-  const [activeTab, setActiveTab] = useState<TaskModalTabId>(() =>
-    initialTab({ hasFocusBlock: Boolean(focusBlockId), isEdit: Boolean(existing) }),
-  );
+  const [allocationView, setAllocationView] = useState(Boolean(focusBlockId));
+  const [mobilePane, setMobilePane] = useState<'details' | 'conversation'>('details');
   // Cykliczność rozwija się sama tylko wtedy, gdy zadanie NAPRAWDĘ ma regułę.
-  const [recurOpen, setRecurOpen] = useState(() => existing?.recurrence != null);
+  const [recurOpen, setRecurOpen] = useState(false);
   // Klasyfikacja rozwija się, gdy któraś wartość jest ustawiona.
   const [classificationOpen, setClassificationOpen] = useState(
     () => (existing?.workCategoryId ?? '') !== '' || (existing?.departmentId ?? '') !== '',
   );
-  // IA-08 — „Wykonane bloki" startuje zwinięte; wejście z konkretnego bloku
+  // IA-08 · „Wykonane bloki" startuje zwinięte; wejście z konkretnego bloku
   // (`?task=<id>&block=<id>`) rozwija sekcję, bo inaczej podświetlany wiersz
   // byłby ukryty i `scrollIntoView` nie miałoby do czego skoczyć.
   const [doneBlocksOpen, setDoneBlocksOpen] = useState(() => Boolean(focusBlockId));
   const tabsBaseId = useId();
-  const tabDomId = (id: TaskModalTabId) => `${tabsBaseId}-tab-${id}`;
-  const panelDomId = (id: TaskModalTabId) => `${tabsBaseId}-panel-${id}`;
   const recurBodyId = `${tabsBaseId}-recur-body`;
   const classificationBodyId = `${tabsBaseId}-classification-body`;
   const doneBlocksBodyId = `${tabsBaseId}-done-blocks-body`;
-  const tabRefs = useRef<Partial<Record<TaskModalTabId, HTMLButtonElement | null>>>({});
-  // Skok z listy blokad zapisu: WSZYSTKIE kotwice pól (`t-title`…`t-assignees`)
-  // mieszkają w panelu „Zadanie", a ukryty panel nie przyjmuje fokusa — więc
-  // najpierw przełączamy zakładkę, a fokus ustawiamy po commicie Reacta.
   const jumpToBlocker = useCallback((blocker: SaveBlocker) => {
-    setActiveTab('zadanie');
-    setTimeout(() => focusSaveBlocker(blocker), 0);
+    setMobilePane('details');
+    setAllocationView(false);
+    setTimeout(() => {
+      const id = blocker.focusId;
+      const tile = id === 't-status' ? 'Status' : id === 't-start' || id === 't-end' ? 'Okres' : id === 't-assignees' ? 'Osoby' : id === 't-project' ? 'Projekt' : null;
+      if (tile) document.querySelector<HTMLButtonElement>(`[data-task-tile="${tile}"] button[aria-expanded="false"]`)?.click();
+      setTimeout(() => focusSaveBlocker(blocker), 0);
+    }, 0);
   }, []);
 
-  // ---- Cykliczność (recurrence) — LOCAL draft only, seeded once from the task's
+  // ---- Cykliczność (recurrence) · LOCAL draft only, seeded once from the task's
   // canonical rule. Never part of TaskDraft/auto-save: apply/clear/restore
   // dispatch SET_TASK_RECURRENCE / SET_RECURRENCE_OVERRIDE explicitly so the
   // delicate SAVE_TASK reconciliation path stays untouched (invariant 6). ----
@@ -792,13 +791,13 @@ export function TaskEditor({
   // NIE trafia z powrotem do modelu (forma kanoniczna zdejmuje ten klucz).
   const [recurInterval, setRecurInterval] = useState(seedRule?.intervalWeeks ?? 1);
   const [recurUntil, setRecurUntil] = useState(seedRule?.until ?? '');
-  // AT-07 — walidacja cykliczności startuje dopiero, gdy użytkownik ruszy tę
+  // AT-07 · walidacja cykliczności startuje dopiero, gdy użytkownik ruszy tę
   // sekcję. Zadanie bez reguły otwierało się z czerwonym „Wybierz przynajmniej
   // jeden dzień tygodnia", choć nikt cykliczności nie włączał.
   const [recurTouched, setRecurTouched] = useState(false);
 
   // ---- Period ----
-  // A calendar empty-slot right-click seeds the clicked day (validated — a
+  // A calendar empty-slot right-click seeds the clicked day (validated · a
   // tampered URL param falls back to today). Editing an existing task ignores it.
   const seededDate =
     !existing && initialDate && isValidDateStr(initialDate) ? initialDate : todayStr();
@@ -921,7 +920,7 @@ export function TaskEditor({
 
   const perErr = periodError(startDate, endDate, { maxDays: MAX_TASK_PERIOD_DAYS });
   const periodValid = perErr === null;
-  // Only computed for display below, and only rendered when periodValid — so a
+  // Only computed for display below, and only rendered when periodValid · so a
   // NaN from an empty/invalid endpoint can never reach the DOM.
   const periodDays = periodValid ? inclusiveDayCount(startDate, endDate) : 0;
 
@@ -935,7 +934,7 @@ export function TaskEditor({
     [periodValid, startDate, endDate],
   );
 
-  // Dostępność każdej przypisanej osoby w okresie zadania — CZYSTO INFORMACYJNA
+  // Dostępność każdej przypisanej osoby w okresie zadania · CZYSTO INFORMACYJNA
   // (nigdy nie blokuje zapisu). `bookedHours` liczy istniejący workload INNYCH
   // zadań (szkic nie ma własnego), więc panel pokazuje realne obłożenie.
   // Dependency narrowed from the whole `state` to only the slices
@@ -994,7 +993,7 @@ export function TaskEditor({
 
   // ---- Handlers ----
 
-  // AT-13 — „Cofnij" po „Wyczyść kolumnę". Migawka żyje w STANIE EDYTORA, a nie
+  // AT-13 · „Cofnij" po „Wyczyść kolumnę". Migawka żyje w STANIE EDYTORA, a nie
   // w store: przydziały są szkicem, a SAVE_TASK i tak uzgadnia je delta po
   // delcie, więc akcja cofania w reduktorze byłaby w złej warstwie (i mogłaby
   // wskrzesić bloki, których użytkownik już nie ma na ekranie).
@@ -1017,15 +1016,15 @@ export function TaskEditor({
     setClearUndo(null);
   }, [startDate, endDate]);
 
-  // Stable handlers (useCallback) so the memoized AllocationGrid — which runs
-  // per-cell availability/overload scans — is not re-rendered/rescanned when the
+  // Stable handlers (useCallback) so the memoized AllocationGrid · which runs
+  // per-cell availability/overload scans · is not re-rendered/rescanned when the
   // user types in an unrelated editor field.
   const setCell = useCallback((personId: string, date: string, hours: number) => {
     setClearUndo(null);
     // Snap to the 0.25 grid the store persists on. The grid cell input is
     // controlled directly by this numeric map (no separate raw-string field to
-    // hold in-flight keystrokes), so snapping here — the setter that writes the
-    // value the grid footer, header total AND SAVE_TASK all read — is the only
+    // hold in-flight keystrokes), so snapping here · the setter that writes the
+    // value the grid footer, header total AND SAVE_TASK all read · is the only
     // point that keeps every total on-grid. Off-grid entries like 0.1 (rendered
     // "6m") can no longer be counted and then silently change on save.
     const snapped = snapHours(hours);
@@ -1090,7 +1089,7 @@ export function TaskEditor({
 
   const clearPerson = useCallback(
     (personId: string) => {
-      // Migawka SPRZED kasowania — kolejne „Wyczyść" po prostu ją zastępuje.
+      // Migawka SPRZED kasowania · kolejne „Wyczyść" po prostu ją zastępuje.
       setClearUndo({
         personId,
         snapshot: snapshotPersonColumn(
@@ -1194,7 +1193,7 @@ export function TaskEditor({
       // godziny na tym zadaniu) zostaje nietknięta.
       setSoldRawByPerson((prev) => withAssigneeHoursDefault(prev, personId));
       // Dział zadania dopisuje się SAM z profilu zaznaczonej osoby (zgłoszenie
-      // 2026-08-07) — ale wyłącznie w puste pole: raz wybrany (ręcznie albo
+      // 2026-08-07) · ale wyłącznie w puste pole: raz wybrany (ręcznie albo
       // przez wcześniejszą osobę) dział nigdy nie jest nadpisywany, bo zadanie
       // niesie JEDEN dział, a wybór usera jest świadomy. Odpięcie osoby
       // celowo niczego nie cofa (dział mógł być już zaakceptowany).
@@ -1210,7 +1209,7 @@ export function TaskEditor({
   // Grid cells SAVE_TASK will actually persist: in-period days for currently
   // assigned people only. The header total, over-budget banner and planning
   // badge all read from THIS single source (not the raw allocations map) so the
-  // displayed numbers can never diverge from what save writes — e.g. after
+  // displayed numbers can never diverge from what save writes · e.g. after
   // shrinking the period, out-of-range cells stop counting immediately instead
   // of only at save (previously header 10h vs grid 4h until save).
   const plannedCells = useMemo<AllocationCell[]>(() => {
@@ -1236,7 +1235,7 @@ export function TaskEditor({
 
   // ---- Godziny sprzedane => szacunek + cele zasobnika --------------------
   // Wartość pola osoby (snap 0,25h; puste/niepoprawne => 0). SUMA tych godzin
-  // jest szacunkiem zadania (null przy 0 — brak szacunku). Cel zasobnika osoby
+  // jest szacunkiem zadania (null przy 0 · brak szacunku). Cel zasobnika osoby
   // = sprzedane − zaplanowane w kalendarzu (nigdy poniżej zera): planowanie w
   // kalendarzu automatycznie "zjada" zasobnik, suma osoby zostaje stała.
   const soldByPerson = useMemo(() => {
@@ -1273,15 +1272,15 @@ export function TaskEditor({
   const binTotal = binTargets.reduce((s, b) => s + b.hours, 0);
 
   // Kalendarz ponad sprzedane: zasobnik jest już pusty, a suma osoby rośnie
-  // ponad wpisaną — ostrzeżenie zamiast dawnego "przekroczono szacunek".
+  // ponad wpisaną · ostrzeżenie zamiast dawnego "przekroczono szacunek".
   const overBudget = soldTotal > 0 && plannedTotalAll > soldTotal + 1e-9;
 
-  // Poprzedni ręczny szacunek (sprzed przejścia na sumę godzin osób) — pokazany
+  // Poprzedni ręczny szacunek (sprzed przejścia na sumę godzin osób) · pokazany
   // raz jako kontekst, gdy różni się od wyliczonej sumy przy otwarciu.
   const legacyEstimateRef = useRef<number | null>(existing?.estimatedHours ?? null);
   const legacyEstimate = legacyEstimateRef.current;
 
-  // ---- Ważność draftu (te same bramki co reduktor — fałszywe „Zapisano” jest
+  // ---- Ważność draftu (te same bramki co reduktor · fałszywe „Zapisano” jest
   // niemożliwe: zapis pada tylko, gdy SAVE_TASK go przyjmie) ----
   const draftForSave: TaskDraft = {
     projectId,
@@ -1298,12 +1297,12 @@ export function TaskEditor({
     // Sygnał tworzenia szkicu (reduktor używa go tylko przy tworzeniu; przy
     // edycji zachowuje stan zadania). Brak wpływu na walidację draftu.
     isDraft,
-    // Utajnienie: pole idzie w draftcie tylko od zarządu — brak klucza znaczy
+    // Utajnienie: pole idzie w draftcie tylko od zarządu · brak klucza znaczy
     // „zachowaj stan zadania", więc edycja przez nie-zarząd niczego nie zmienia.
     ...(isBoard ? { isConfidential: confidential } : {}),
   };
   const assigneesValid = assigneeIds.every((id) => hasEntity(state, 'person', id));
-  // IA-12 — jedna lista zamiast anonimowego boolean-a: te same bramki, ale z
+  // IA-12 · jedna lista zamiast anonimowego boolean-a: te same bramki, ale z
   // powodem i kotwicą fokusa. `formValid` (auto-zapis + ręczny zapis) to nadal
   // dokładnie „nic nie blokuje”, więc reduktor nigdy nie dostaje złego payloadu
   // (invariant 6).
@@ -1380,7 +1379,7 @@ export function TaskEditor({
 
   // Publikacja ISTNIEJĄCEGO szkicu z karty zadania: najpierw zapis (żeby
   // PUBLISH_TASK zobaczył świeże `draftHours`), potem publikacja i zamknięcie.
-  // Dwa kolejne dispatche są bezpieczne — React stosuje je po kolei.
+  // Dwa kolejne dispatche są bezpieczne · React stosuje je po kolei.
   const handlePublishExisting = () => {
     if (!existing) return;
     if (doSave()) {
@@ -1394,7 +1393,7 @@ export function TaskEditor({
     if (doSave({ publishNew: true })) onSaved();
   };
 
-  // Auto-zapis (tylko edycja istniejącego zadania — tworzenie zostaje jawne,
+  // Auto-zapis (tylko edycja istniejącego zadania · tworzenie zostaje jawne,
   // żeby pół-tytułu nie stawało się zadaniem). Ważny draft po 900 ms ciszy
   // zapisuje się w tle; modal zostaje otwarty, status w nagłówku pokazuje
   // „Zapisano”.
@@ -1436,7 +1435,7 @@ export function TaskEditor({
         : recurUntilInvalid
           ? 'Data „do dnia” nie może być wcześniejsza niż data rozpoczęcia.'
           : recurStartMin + recurDurMin > DAY_MINUTES
-            ? 'Wystąpienie nie mieści się w dobie — koniec po 24:00.'
+            ? 'Wystąpienie nie mieści się w dobie · koniec po 24:00.'
             : null;
 
   // Każda edycja sekcji „Cykliczność” odsłania jej walidację (AT-07).
@@ -1476,7 +1475,7 @@ export function TaskEditor({
   // (chronological by date, then start), bin rows last. SET_BLOCK_DONE toggles a
   // single entry; when the tick leaves nothing to do (all blocks done, empty
   // bin, no free sold hours) the reducer auto-closes a NON-recurring task
-  // (autoCompleteTask, 2026-08-24) — unticking never reopens it.
+  // (autoCompleteTask, 2026-08-24) · unticking never reopens it.
   const taskBlocks = useMemo(() => {
     if (!existing) return [];
     return state.workload
@@ -1513,7 +1512,7 @@ export function TaskEditor({
     });
   const blocksDoneCount = taskBlocks.filter((b) => b.done === true).length;
 
-  // ---- Model sekcji/zakładek — JEDYNE źródło kolejności i widoczności ----
+  // ---- Model sekcji/zakładek · JEDYNE źródło kolejności i widoczności ----
   const commentCount = existing ? commentsFor(state, 'task', existing.id).length : 0;
   const sectionFlags: SectionFlags = {
     isEdit,
@@ -1525,27 +1524,7 @@ export function TaskEditor({
     contentMasked,
   };
   const sections = visibleSections(sectionFlags);
-  const tabs = visibleTabs(sectionFlags);
-  // Zakładka mogła zniknąć w trakcie edycji (np. okres przestał być poprawny w
-  // trybie tworzenia) — wtedy widok wraca na „Zadanie" bez efektu i bez skoku
-  // stanu (`activeTab` zostaje, więc powrót poprawnego okresu go przywraca).
-  const currentTab: TaskModalTabId = tabs.some((t) => t.id === activeTab) ? activeTab : 'zadanie';
-  const showTabs = tabs.length > 1;
-
-  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const next = resolveTabNavKey(
-      event.key,
-      tabs.findIndex((t) => t.id === currentTab),
-      tabs.length,
-    );
-    if (next === null) return;
-    event.preventDefault();
-    // Zaznaczenie PODĄŻA ZA FOKUSEM (wzorzec poziomego tablisty).
-    setActiveTab(tabs[next].id);
-    tabRefs.current[tabs[next].id]?.focus();
-  };
-
-  /** Wspólny nagłówek sekcji zwijanej — `aria-expanded` + `aria-controls`. */
+  /** Wspólny nagłówek sekcji zwijanej · `aria-expanded` + `aria-controls`. */
   const collapseToggle = (label: string, open: boolean, bodyId: string, onToggle: () => void) => (
     <button
       type="button"
@@ -1561,156 +1540,19 @@ export function TaskEditor({
     </button>
   );
 
-  // Treść każdej sekcji. Kolejność i widoczność NIE żyją tutaj — bierze je
-  // `visibleSections` — więc dopisanie sekcji to jeden wpis w czystym modelu.
+  // Treść każdej sekcji. Kolejność i widoczność NIE żyją tutaj · bierze je
+  // `visibleSections` · więc dopisanie sekcji to jeden wpis w czystym modelu.
   const sectionContent: Record<TaskModalSectionId, ReactNode> = {
-    // 1) Kontekst — przyklejona głowa: co, gdzie, w jakim stanie.
-    context: (
-      <div className="task-context-header">
-        <Field
-          id="t-title"
-          label="Tytuł *"
-          error={showError('title') ? 'Tytuł jest wymagany' : undefined}
-        >
-          {(control) => (
-            <input
-              {...control}
-              data-autofocus
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onBlur={() => markTouched('title')}
-              className={showError('title') ? 'invalid' : undefined}
-              placeholder="Co trzeba zrobić?"
-              disabled={readOnly}
-              aria-describedby={roDescWith(control)}
-            />
-          )}
-        </Field>
-        <div className="field-row">
-          {state.projects.length > 0 && state.clients.length > 0 && (
-            <Field id="t-client" label="Klient">
-              {(control) => (
-                <select
-                  {...control}
-                  value={pickedClientId}
-                  onChange={(e) => changePickedClient(e.target.value)}
-                  disabled={readOnly}
-                  aria-describedby={roDescWith(control)}
-                >
-                  {clientOptions.map((c) => (
-                    <option key={c.id || 'bez-klienta'} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </Field>
-          )}
-          <Field
-            id="t-project"
-            label="Projekt *"
-            // Pusta baza projektów ma własną podpowiedź („najpierw utwórz
-            // projekt"), więc inline'owy błąd wyboru jej nie dubluje.
-            error={
-              showError('project') && state.projects.length > 0 && clientProjects.length > 0
-                ? 'Wybierz projekt dla tego zadania.'
-                : undefined
-            }
-          >
-            {(control) =>
-              state.projects.length === 0 ? (
-                <p className="field-hint">
-                  Nie ma jeszcze projektów — najpierw <Link to="/projects">utwórz projekt</Link>.
-                  Każde zadanie musi należeć do projektu.
-                </p>
-              ) : clientProjects.length === 0 ? (
-                <p className="field-hint">
-                  Ten klient nie ma jeszcze projektów — wybierz innego klienta albo{' '}
-                  <Link to="/projects">utwórz projekt</Link>.
-                </p>
-              ) : (
-                <select
-                  {...control}
-                  value={projectId}
-                  onChange={(e) => setProjectId(e.target.value)}
-                  onBlur={() => markTouched('project')}
-                  disabled={readOnly}
-                  aria-describedby={roDescWith(control)}
-                >
-                  {clientProjects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              )
-            }
-          </Field>
-          <Field
-            id="t-status"
-            label="Status *"
-            error={showError('status') ? 'Wybierz istniejący status.' : undefined}
-          >
-            {(control) => (
-              <select
-                {...control}
-                value={statusId}
-                onChange={(e) => setStatusId(e.target.value)}
-                onBlur={() => markTouched('status')}
-                disabled={readOnly}
-                aria-describedby={roDescWith(control)}
-              >
-                {pickableStatuses.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                    {archivedSuffix(s.archived)}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-        </div>
-      </div>
-    ),
+    // 1) Kontekst · przyklejona głowa: co, gdzie, w jakim stanie.
+    context: (<>{!contentMasked && <TaskReadText id="t-title" label="Tytuł" value={title} onChange={setTitle} disabled={readOnly} error={showError('title') ? 'Tytuł jest wymagany' : undefined} onBlur={() => markTouched('title')} />}</>),
 
-    // 2) Szczegóły — opis i priorytet (kategoria/dział przeniosły się do
+    // 2) Szczegóły · opis i priorytet (kategoria/dział przeniosły się do
     //    zwijanej „Klasyfikacji").
     details: (
       <div className="editor-section">
-        <h2>Szczegóły</h2>
-        <Field id="t-desc" label="Opis">
-          {(control) => (
-            <textarea
-              {...control}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder="Opcjonalne szczegóły"
-              disabled={readOnly}
-              aria-describedby={roDescWith(control)}
-            />
-          )}
-        </Field>
-        <div className="field-row">
-          <Field id="t-priority" label="Priorytet">
-            {(control) => (
-              <select
-                {...control}
-                value={priority}
-                onChange={(e) => setPriority(e.target.value as TaskPriority)}
-                disabled={readOnly}
-                aria-describedby={roDescWith(control)}
-              >
-                {TASK_PRIORITIES.map((p) => (
-                  <option key={p} value={p}>
-                    {PRIORITY_LABELS[p]}
-                  </option>
-                ))}
-              </select>
-            )}
-          </Field>
-        </div>
-        {/* Utajnij treść — wyłącznie dla zarządu (reguły wglądu:
+        <h2>Opis</h2>
+        <TaskReadText id="t-desc" label="Opis" value={description} onChange={setDescription} multiline disabled={readOnly} />
+        {/* Utajnij treść · wyłącznie dla zarządu (reguły wglądu:
             src/store/confidentiality.ts). Reduktor i tak ignoruje pole od
             innych, więc checkbox to bramka UX, nie zabezpieczenie. */}
         {isBoard && (
@@ -1731,14 +1573,14 @@ export function TaskEditor({
       </div>
     ),
 
-    // 3) Okres — NAD godzinami: najpierw „kiedy", potem „ile".
+    // 3) Okres · NAD godzinami: najpierw „kiedy", potem „ile".
     period: (
       <div className="editor-section">
         <h2>Okres</h2>
         <div className="field-row">
           {/* Błąd okresu opisuje OBA pola jednym akapitem (`t-period-error`).
               Błąd pojedynczej daty oznacza swoje pole, a błąd ZAKRESU
-              (`reversed`/`too-long`) oba — żadna data nie jest sama zła. */}
+              (`reversed`/`too-long`) oba · żadna data nie jest sama zła. */}
           <Field
             id="t-start"
             label="Data startu"
@@ -1802,7 +1644,7 @@ export function TaskEditor({
         ) : (
           // `id` + `tabIndex` to kotwica skoku z listy blokad zapisu (IA-12).
           // Grupa (nie pojedyncza kontrolka), więc wiązanie opisu/`aria-invalid`
-          // jest ręczne — `fieldAria` jest tu jedynym źródłem tych atrybutów.
+          // jest ręczne · `fieldAria` jest tu jedynym źródłem tych atrybutów.
           <div
             className="assignee-picker"
             id="t-assignees"
@@ -1848,8 +1690,8 @@ export function TaskEditor({
           <div className="sold-hours">
             <p className="field-hint">
               {isDraft
-                ? 'Edytujesz godziny każdej osoby na tym szkicu (sprzedane). Zapisują się ze szkicem, a po publikacji trafią do zasobnika osoby. Szacunek zadania to ich suma — wylicza się sam.'
-                : 'Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek zadania to ich suma — wylicza się sam, nie ma osobnego pola. Część niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.'}
+                ? 'Edytujesz godziny każdej osoby na tym szkicu (sprzedane). Zapisują się ze szkicem, a po publikacji trafią do zasobnika osoby. Szacunek zadania to ich suma · wylicza się sam.'
+                : 'Edytujesz godziny każdej osoby na tym zadaniu (sprzedane). Szacunek zadania to ich suma · wylicza się sam, nie ma osobnego pola. Część niezaplanowana w kalendarzu trafia automatycznie do zasobnika osoby.'}
             </p>
             {assignedPeople.map((p) => {
               const sold = soldByPerson.get(p.id) ?? 0;
@@ -1912,7 +1754,7 @@ export function TaskEditor({
               <strong>{formatDuration(soldTotal)}</strong>{' '}
               <span className="muted">— wyliczany</span>
             </div>
-            {/* Panel dostępności (informacyjny) — dostępne vs zajęte w okresie
+            {/* Panel dostępności (informacyjny) · dostępne vs zajęte w okresie
                 zadania, z podświetleniem przeciążonych dni. Nie blokuje zapisu. */}
             {periodValid && (
               <div className="availability-panel">
@@ -1990,7 +1832,7 @@ export function TaskEditor({
         )}
         {legacyEstimate != null && Math.abs(legacyEstimate - soldTotal) > 1e-9 && (
           <p className="field-hint">
-            Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} — po zapisie
+            Poprzedni ręczny szacunek: {formatDuration(legacyEstimate)} · po zapisie
             szacunkiem stanie się suma godzin osób.
           </p>
         )}
@@ -2003,11 +1845,11 @@ export function TaskEditor({
       </div>
     ),
 
-    // 6) Checklista — „jak sprawdzę, że zrobione".
+    // 6) Checklista · „jak sprawdzę, że zrobione".
     checklist: (
       <div className="editor-section">
         <h2>Checklista</h2>
-        {/* SY-20 — jeden wzór postępu, bez czasownika. */}
+        {/* SY-20 · jeden wzór postępu, bez czasownika. */}
         {checklist.length > 0 && (
           <p className="checklist-count">{itemsProgressLabel(checklistDone, checklist.length)}</p>
         )}
@@ -2015,7 +1857,7 @@ export function TaskEditor({
           <ul className="checklist-list">
             {checklist.map((item) => (
               <li key={item.id} className={item.done ? 'checklist-row done' : 'checklist-row'}>
-                {/* AT-13 — `id` + `<label htmlFor>`: klik w treść pozycji
+                {/* AT-13 · `id` + `<label htmlFor>`: klik w treść pozycji
                     przełącza pole wyboru, więc cel trafienia to cały tekst, a
                     nie 20-pikselowy kwadrat. Przycisk „Usuń" zostaje POZA
                     etykietą, żeby nie przełączał pozycji przy okazji. */}
@@ -2074,10 +1916,10 @@ export function TaskEditor({
       </div>
     ),
 
-    // 7) Cykliczność — ZWINIĘTA za przełącznikiem. Wystąpienia są wyłącznie
+    // 7) Cykliczność · ZWINIĘTA za przełącznikiem. Wystąpienia są wyłącznie
     //    podglądem (invariant 1); sekcja dispatchuje SET_TASK_RECURRENCE /
     //    SET_RECURRENCE_OVERRIDE i NIGDY nie rusza draftu SAVE_TASK ani
-    //    auto-zapisu. Samo zwinięcie niczego nie wysyła — „Usuń cykliczność"
+    //    auto-zapisu. Samo zwinięcie niczego nie wysyła · „Usuń cykliczność"
     //    zostaje jedyną drogą kasowania reguły.
     recurrence: (
       <div className="editor-section editor-section-collapsible">
@@ -2090,7 +1932,7 @@ export function TaskEditor({
           ) : (
             <>
               <p className="field-hint">
-                Wystąpienia są tylko podglądem w kalendarzu — nie tworzą zaplanowanych
+                Wystąpienia są tylko podglądem w kalendarzu · nie tworzą zaplanowanych
                 godzin ani nie wpływają na sumy i przeciążenie.
               </p>
               <div className="field">
@@ -2217,13 +2059,13 @@ export function TaskEditor({
                       <li key={ov.date} className="recur-override-row">
                         <span className="recur-override-text">
                           {/* Trzy warianty wyjątku: pominięcie, samo wykonanie
-                              (czasy z reguły — bez artefaktu „00:00, 0 h") oraz
+                              (czasy z reguły · bez artefaktu „00:00, 0 h") oraz
                               przesunięcie czasu z ewentualnym sufiksem wykonania. */}
                           {ov.skip === true
-                            ? `${recurDateLabel(ov.date)} — pominięto`
+                            ? `${recurDateLabel(ov.date)} · pominięto`
                             : ov.startMinutes === undefined
-                              ? `${recurDateLabel(ov.date)} — zrobione`
-                              : `${recurDateLabel(ov.date)} — ${formatMinutes(
+                              ? `${recurDateLabel(ov.date)} · zrobione`
+                              : `${recurDateLabel(ov.date)} · ${formatMinutes(
                                   ov.startMinutes,
                                 )}, ${formatDuration((ov.durationMinutes ?? 0) / 60)}${
                                   ov.done === true ? ' · zrobione' : ''
@@ -2249,7 +2091,7 @@ export function TaskEditor({
       </div>
     ),
 
-    // 8) Klasyfikacja — ZWINIĘTA: kategoria + dział (dawniej w „Szczegółach").
+    // 8) Klasyfikacja · ZWINIĘTA: kategoria + dział (dawniej w „Szczegółach").
     classification: (
       <div className="editor-section editor-section-collapsible">
         {collapseToggle('Klasyfikacja', classificationOpen, classificationBodyId, () =>
@@ -2305,10 +2147,10 @@ export function TaskEditor({
       <div className="editor-section">
         <h2>Dzienny przydział godzin</h2>
         {/* Podpowiedź dotyczy pola godziny startu, a siatka pokazuje je tylko w
-            trybie edycji — w podglądzie bez uprawnień byłaby myląca. */}
+            trybie edycji · w podglądzie bez uprawnień byłaby myląca. */}
         {!readOnly && (
           <p className="field-hint" id={startHintId}>
-            Godzina startu jest opcjonalna — puste pole planuje blok w pierwszym wolnym oknie dnia.
+            Godzina startu jest opcjonalna · puste pole planuje blok w pierwszym wolnym oknie dnia.
           </p>
         )}
         {!periodValid ? (
@@ -2324,7 +2166,7 @@ export function TaskEditor({
             )}
             {/* Ta sama edycja w dwóch postaciach: tabela na desktopie, lista dni
                 na telefonie. Oba warianty dostają TE SAME (memoizowane) propsy i
-                zapisują przez TE SAME handlery — druga ścieżka mutacji nie
+                zapisują przez TE SAME handlery · druga ścieżka mutacji nie
                 powstaje (inwariant 1). */}
             {isMobileNav ? (
               <AllocationDayList
@@ -2370,7 +2212,7 @@ export function TaskEditor({
       </div>
     ),
 
-    // 10) Wykonane bloki — per-block completion (PKG-per-block-done). One row
+    // 10) Wykonane bloki · per-block completion (PKG-per-block-done). One row
     //     per WorkloadEntry (NOT per day): each block's portion of hours has its
     //     own tick. Toggling a block dispatches SET_BLOCK_DONE; when the tick
     //     leaves nothing to do (all blocks done, empty bin, no free sold hours)
@@ -2378,7 +2220,7 @@ export function TaskEditor({
     //     2026-08-24). Unticking never reopens a task.
     'done-blocks': (
       <div className="editor-section editor-section-collapsible">
-        {/* IA-08 — sekcja jest ZWINIĘTA: ✓ na kafelku kalendarza jest szybszą
+        {/* IA-08 · sekcja jest ZWINIĘTA: ✓ na kafelku kalendarza jest szybszą
             drogą do tej samej akcji `SET_BLOCK_DONE`. Wejście z konkretnego
             bloku (`?task=<id>&block=<id>`) rozwija ją SAMO, bo inaczej nie dałoby
             się przewinąć do podświetlanego wiersza. */}
@@ -2435,41 +2277,123 @@ export function TaskEditor({
       </div>
     ),
 
-    // 11) Dyskusja — POZA formularzem zadania (CommentsPanel ma własny `<form>`).
+    // 11) Dyskusja · POZA formularzem zadania (CommentsPanel ma własny `<form>`).
     //     `existing` to strażnik TYPU (widoczność liczy model: `isEdit`).
-    discussion: existing ? (
-      <div className="editor-section">
-        <CommentsPanel entityType="task" entityId={existing.id} />
-      </div>
-    ) : null,
+    discussion: null,
   };
 
-  /** Panel zakładki. Sekcje idą WYŁĄCZNIE z modelu — bez własnej kolejności. */
-  const renderPanel = (tab: TaskModalTab) => (
-    <div
-      key={tab.id}
-      className={`task-tabpanel task-tabpanel-${tab.id}`}
-      hidden={currentTab !== tab.id}
-      {...(showTabs
-        ? { role: 'tabpanel', id: panelDomId(tab.id), 'aria-labelledby': tabDomId(tab.id) }
-        : {})}
-    >
-      {sections
-        .filter((section) => section.tab === tab.id)
-        .map((section) => (
-          <Fragment key={section.id}>{sectionContent[section.id]}</Fragment>
-        ))}
-    </div>
-  );
-
+  const clientEditor = (<Field id="t-client" label="Klient">
+              {(control) => (
+                <select
+                  {...control}
+                  value={pickedClientId}
+                  onChange={(e) => changePickedClient(e.target.value)}
+                  disabled={readOnly}
+                  aria-describedby={roDescWith(control)}
+                >
+                  {clientOptions.map((c) => (
+                    <option key={c.id || 'bez-klienta'} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>);
+  const projectEditor = (<Field
+            id="t-project"
+            label="Projekt *"
+            // Pusta baza projektów ma własną podpowiedź („najpierw utwórz
+            // projekt"), więc inline'owy błąd wyboru jej nie dubluje.
+            error={
+              showError('project') && state.projects.length > 0 && clientProjects.length > 0
+                ? 'Wybierz projekt dla tego zadania.'
+                : undefined
+            }
+          >
+            {(control) =>
+              state.projects.length === 0 ? (
+                <p className="field-hint">
+                  Nie ma jeszcze projektów · najpierw <Link to="/projects">utwórz projekt</Link>.
+                  Każde zadanie musi należeć do projektu.
+                </p>
+              ) : clientProjects.length === 0 ? (
+                <p className="field-hint">
+                  Ten klient nie ma jeszcze projektów · wybierz innego klienta albo{' '}
+                  <Link to="/projects">utwórz projekt</Link>.
+                </p>
+              ) : (
+                <select
+                  {...control}
+                  value={projectId}
+                  onChange={(e) => setProjectId(e.target.value)}
+                  onBlur={() => markTouched('project')}
+                  disabled={readOnly}
+                  aria-describedby={roDescWith(control)}
+                >
+                  {clientProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              )
+            }
+          </Field>);
+  const statusEditor = (<Field
+            id="t-status"
+            label="Status *"
+            error={showError('status') ? 'Wybierz istniejący status.' : undefined}
+          >
+            {(control) => (
+              <select
+                {...control}
+                value={statusId}
+                onChange={(e) => setStatusId(e.target.value)}
+                onBlur={() => markTouched('status')}
+                disabled={readOnly}
+                aria-describedby={roDescWith(control)}
+              >
+                {pickableStatuses.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                    {archivedSuffix(s.archived)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>);
+  const priorityEditor = (<Field id="t-priority" label="Priorytet">
+            {(control) => (
+              <select
+                {...control}
+                value={priority}
+                onChange={(e) => setPriority(e.target.value as TaskPriority)}
+                disabled={readOnly}
+                aria-describedby={roDescWith(control)}
+              >
+                {TASK_PRIORITIES.map((p) => (
+                  <option key={p} value={p}>
+                    {PRIORITY_LABELS[p]}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>);
+  const [breadcrumbTarget, setBreadcrumbTarget] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => setBreadcrumbTarget(document.getElementById('task-card-breadcrumb')), []);
+  const hoursRows = taskHoursRows(assignedPeople, soldByPerson, datedByPerson);
+  const shown = (id: TaskModalSectionId) => sections.some(s => s.id === id) ? sectionContent[id] : null;
+  const tile = (label: string, summary: ReactNode, editor: ReactNode, snapshot: () => () => void, className = '') =>
+    <div data-task-tile={label}><TaskTile label={label} summary={summary} disabled={readOnly} className={className}
+      onBegin={snapshot}>{editor}</TaskTile></div>;
   return (
-    <div className="editor task-editor">
+    <div className="editor task-editor task-card-layout" data-mobile-pane={mobilePane}>
       {readOnly && (
         <span id={roDescId} className="sr-only">
           {contentMasked ? 'Treść zadania utajniona.' : `${NO_PERM_TITLE} do edycji zadań.`}
         </span>
       )}
-      {/* Utajniona treść bez wglądu: bursztynowa (nie czerwona — to informacja,
+      {/* Utajniona treść bez wglądu: bursztynowa (nie czerwona · to informacja,
           nie błąd) plansza nad sekcjami; niżej zostają wyłącznie fakty
           planistyczne z modelu sekcji (`contentMasked`). */}
       {contentMasked && (
@@ -2477,38 +2401,17 @@ export function TaskEditor({
           Treść zadania utajniona. Widoczne są tylko dane planowania: terminy, godziny i osoby.
         </p>
       )}
-      {/* Pasek zakładek renderuje się DOPIERO przy drugiej widocznej zakładce —
-          nowe zadanie bez okresu ma jedną i nie pokazuje pustego przełącznika.
-          Zaznaczenie podąża za fokusem (`resolveTabNavKey`). */}
-      {showTabs && (
-        <div className="task-editor-tabs" role="tablist" aria-label="Sekcje zadania">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={tabDomId(tab.id)}
-              ref={(el) => {
-                tabRefs.current[tab.id] = el;
-              }}
-              className={
-                tab.id === currentTab ? 'task-editor-tab active' : 'task-editor-tab'
-              }
-              aria-selected={tab.id === currentTab}
-              aria-controls={panelDomId(tab.id)}
-              tabIndex={tab.id === currentTab ? 0 : -1}
-              onClick={() => setActiveTab(tab.id)}
-              onKeyDown={onTabKeyDown}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      )}
-      {/* Formularz obejmuje panele „Zadanie" i „Planowanie". „Dyskusja" i sticky
-          pasek akcji zostają POZA nim: CommentsPanel ma własny `<form>`
-          (zagnieżdżenie jest nielegalne w HTML i „Skomentuj" zapisywałoby
-          zadanie). */}
+      <div className="task-card-mobile-switch" role="group" aria-label="Widok zadania">
+        <button type="button" className="btn" aria-pressed={mobilePane === 'details'} onClick={() => setMobilePane('details')}>Szczegóły</button>
+        <button type="button" className="btn" aria-pressed={mobilePane === 'conversation'} onClick={() => setMobilePane('conversation')}>Rozmowa ({commentCount})</button>
+      </div>
+      {!contentMasked && breadcrumbTarget && createPortal(<nav className="task-card-breadcrumb" aria-label="Kontekst zadania">
+        <div data-task-tile="Klient"><TaskTile label="Klient" summary={clientOptions.find(c => c.id === pickedClientId)?.name ?? 'Bez klienta'} disabled={readOnly}>{clientEditor}</TaskTile></div>
+        <ChevronRight size={14} aria-hidden />
+        <div data-task-tile="Projekt"><TaskTile label="Projekt" summary={state.projects.find(p => p.id === projectId)?.name ?? 'Wybierz projekt'} disabled={readOnly}>{projectEditor}</TaskTile></div>
+      </nav>, breadcrumbTarget)}
+      <div className="task-card-columns">
+      <div className="task-card-left">
       <form
         className="task-editor-form"
         onSubmit={(e) => {
@@ -2517,11 +2420,32 @@ export function TaskEditor({
         }}
         noValidate
       >
-        {tabs.filter((tab) => tab.id !== 'dyskusja').map(renderPanel)}
+        {allocationView ? <>
+          <button type="button" className="btn ghost" onClick={() => setAllocationView(false)}>← Szczegóły zadania</button>
+          {sectionContent.allocation}{sectionContent['done-blocks']}
+        </> : <>
+          {sectionContent.context}
+          <div className="task-card-tiles">
+            {!contentMasked && tile('Status', getStatus(state, statusId)?.name ?? 'Wybierz status', statusEditor, () => { const v = statusId; return () => setStatusId(v); })}
+            {!contentMasked && tile('Priorytet', PRIORITY_LABELS[priority], priorityEditor, () => { const v = priority; return () => setPriority(v); })}
+            {tile('Okres', periodValid ? `${recurDateLabel(startDate)} → ${recurDateLabel(endDate)}` : 'Ustaw okres', sectionContent.period, () => { const a = startDate, b = endDate; return () => { setStartDate(a); setEndDate(b); }; })}
+            {tile('Osoby', assignedPeople.map(p => p.name).join(', ') || 'Przypisz osoby', sectionContent['people-hours'], () => { const a = assigneeIds, b = soldRawByPerson, c = departmentId; return () => { setAssigneeIds(a); setSoldRawByPerson(b); setDepartmentId(c); }; }, 'task-card-people-editor')}
+            {tile('Godziny', <><span className="task-card-hours-bar" aria-hidden><i style={{ width: `${soldTotal > 0 ? Math.min(100, plannedTotalAll / soldTotal * 100) : 0}%` }} /></span>{formatDuration(plannedTotalAll)} / {formatDuration(soldTotal)}</>, sectionContent['people-hours'], () => { const v = soldRawByPerson; return () => setSoldRawByPerson(v); }, 'task-card-hours-editor')}
+            {!contentMasked && tile('Kategoria i dział', [state.workCategories.find(c => c.id === workCategoryId)?.name, state.departments.find(d => d.id === departmentId)?.name].filter(Boolean).join(' · ') || 'Bez klasyfikacji', sectionContent.classification, () => { const a = workCategoryId, b = departmentId; setClassificationOpen(true); return () => { setWorkCategoryId(a); setDepartmentId(b); }; })}
+          </div>
+          {shown('details')}{shown('checklist')}
+          <section className="task-card-hours-table"><div className="task-card-section-head"><h2>Godziny osób <small>sprzedane {formatDuration(soldTotal)}</small></h2>
+            {!isDraft && <button type="button" className="btn ghost" onClick={() => setAllocationView(true)}><CalendarDays size={14} aria-hidden />Siatka dni</button>}</div>
+            <table><thead><tr><th>Osoba</th><th>W kalendarzu</th><th>W zasobniku</th><th>Razem</th></tr></thead><tbody>
+              {hoursRows.map(row => <tr key={row.id}><td>{row.name}</td><td>{formatDuration(row.calendar)}</td><td>{formatDuration(row.bin)}</td><td>{formatDuration(row.total)}</td></tr>)}
+            </tbody></table>{hoursRows.length === 0 && <p className="field-hint">Brak przypisanych osób</p>}
+          </section>
+          {shown('recurrence')}{overBudget && <p className="field-notice">W kalendarzu jest więcej godzin niż sprzedano. Zwiększ godziny osób lub ogranicz siatkę.</p>}
+        </>}
 
         {/* Domyślny przycisk formularza. Bez niego Enter w polu tekstowym NIE
             wysyła formularza z wieloma polami (HTML: implicit submission wymaga
-            przycisku wysyłki). Ukryty — prawdziwe akcje stoją w sticky stopce
+            przycisku wysyłki). Ukryty · prawdziwe akcje stoją w sticky stopce
             POZA formularzem, żeby nie zagnieżdżać ich w nim. */}
         {!readOnly && (
           <button type="submit" hidden aria-hidden tabIndex={-1}>
@@ -2530,14 +2454,9 @@ export function TaskEditor({
         )}
       </form>
 
-      {/* Dyskusja jest SIOSTRĄ formularza, nigdy jego dzieckiem: CommentsPanel
-          ma własny `<form>`, a zagnieżdżenie jest nielegalne w HTML i
-          „Skomentuj" zapisywałoby zadanie. */}
-      {tabs.filter((tab) => tab.id === 'dyskusja').map(renderPanel)}
-
-      {/* f) Save / Cancel — sticky: zawsze widoczne bez przewijania */}
-      <div className="editor-actions editor-actions-sticky">
-        {/* IA-12 — powody, przez które zapis nie przejdzie, stoją PRZY przycisku
+      {/* f) Save / Cancel · sticky: zawsze widoczne bez przewijania */}
+      <div className="editor-actions editor-actions-sticky task-card-actions">
+        {/* IA-12 · powody, przez które zapis nie przejdzie, stoją PRZY przycisku
             (przyczyna bywa kilka tysięcy pikseli wyżej). Każdy powód z kotwicą
             jest klikalny i przenosi do swojego pola. */}
         {!readOnly && blockers.length > 0 && (saveAttempted || (isEdit && dirty)) && (
@@ -2575,10 +2494,10 @@ export function TaskEditor({
         {/* Statyczny hint „Zmiany zapisują się automatycznie.” ZNIKŁ: stan zapisu
             niesie trzystanowy wskaźnik w nagłówku (SY-15/16), a stopka mówi
             wyłącznie o akcjach. */}
-        {!readOnly &&
+        {!readOnly && (!isEdit || isDraft) &&
           (isDraft ? (
             <>
-              {/* Szkic: rozdzielone akcje — zapis szkicu vs publikacja. */}
+              {/* Szkic: rozdzielone akcje · zapis szkicu vs publikacja. */}
               <DisabledHint reason={noProjectReason} id="task-no-project-draft">
                 <button
                   type="button"
@@ -2609,16 +2528,19 @@ export function TaskEditor({
                 disabled={state.projects.length === 0}
               >
                 {/* Edycja jest auto-zapisywana, więc główny przycisk KOŃCZY pracę
-                    („Gotowe”), a nie zapisuje po raz drugi — ten sam handler. */}
+                    („Gotowe”), a nie zapisuje po raz drugi · ten sam handler. */}
                 {isEdit ? 'Gotowe' : 'Utwórz zadanie'}
               </button>
             </DisabledHint>
           ))}
         {/* W trybie edycji NIE ma „Anuluj”: nie da się anulować czegoś, co już
             zostało zapisane w tle. Zostaje uczciwe „Zamknij”. */}
-        <button type="button" className="btn ghost" onClick={onCancel}>
-          {readOnly || isEdit || !dirty ? 'Zamknij' : 'Anuluj'}
-        </button>
+        {!isEdit && <button type="button" className="btn ghost" onClick={onCancel}>Anuluj</button>}
+      </div>
+      </div>
+      <aside className="task-card-conversation" aria-label="Rozmowa zadania">
+        {existing && !isDraft && !contentMasked ? <TaskConversationPane taskId={existing.id} /> : <TaskConversationEmpty />}
+      </aside>
       </div>
     </div>
   );
