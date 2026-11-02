@@ -139,8 +139,14 @@ calendar/bin pointer logic. A failed save must never show "Zapisano". Invalid co
 3. Playwright: `import { chromium } from '/Users/kacpercichy/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/index.mjs'`,
    launch with `{ channel: 'chrome' }`. Local mode dev server: `VITE_AUTH_MODE=local npx vite --port <yours> --strictPort`,
    then click "Wczytaj przykładowe dane". Cloud features cannot be logged into from automation; cover them with unit tests.
-4. Commit often, only your own paths: `git add <your paths>` (never `git add -A` / `.`), message prefix
-   `feat(karta-v2/L<n>): ...` in Polish or English. If `index.lock` exists, wait 5 s and retry.
+4. Commit often, only your own paths, and ALWAYS with a pathspec so other lines' staged files never ride along:
+   `git add <your paths> && git commit -m "feat(karta-v2/L<n>): ..." -- <your paths>`. Never `git add -A` / `.`,
+   never `git reset`, `git stash`, `git checkout -- <others' paths>`. If `index.lock` exists, wait 5 s and retry.
+
+## Integration notes (coordinator)
+
+- L3: build the queue as `useAttachmentQueue(conversationId, storage.upload, storage.remove)` and focus the composer
+  textarea after the last tray item is removed (see src/chat/attachments/README.md).
 5. Bugs: if you find a bug in another line's area or in already committed work, stop and report it with evidence
    (file, line, repro). Do not patch other lines' files. Red-to-green inside your own unreported task is fine.
 6. Final report: what is done, commits (SHA), tests run with results, what is not done, open questions.
