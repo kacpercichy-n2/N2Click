@@ -132,10 +132,21 @@ async function flowMultiBlockSave(browser) {
     // godzinami nigdy nie jest zwinięty (zwijają się wyłącznie dni puste).
     // Asercje poniżej są bez zmian.
     // Karta v2 nie ma „Zapisz i zamknij": komórka zatwierdza się po wyjściu z
-    // pola (Tab), a zapis idzie przez auto-zapis po 900 ms ciszy.
-    const commitCell = async () => {
+    // pola (Tab), a zapis idzie przez auto-zapis po 900 ms ciszy. Gdy zmiana
+    // ma się zapisać, czekamy na komunikat „Zapisano <godzina>" (stały
+    // timeout bywał za krótki pod obciążeniem); bez zmiany nie ma na co
+    // czekać, więc tylko dajemy auto-zapisowi czas, którego NIE powinien użyć.
+    const commitCell = async ({ expectSave = true } = {}) => {
       await cell().locator('input.alloc-input').press('Tab');
-      await page.waitForTimeout(1800);
+      if (expectSave) {
+        await page.waitForFunction(() => /Zapisano \d/.test(document.body.innerText), null, {
+          timeout: 10000,
+        });
+        // localStorage dostaje stan dopiero po PERSIST_COALESCE_MS (1000 ms).
+        await page.waitForTimeout(1500);
+      } else {
+        await page.waitForTimeout(1800);
+      }
     };
     const cell = () =>
       modal
@@ -158,7 +169,7 @@ async function flowMultiBlockSave(browser) {
     await page.screenshot({ path: `${SHOTS}/${ENGINE}-c-multiblock-cell.png` });
 
     // --- (d) unchanged save leaves both rows byte-identical (id included) ---
-    await commitCell();
+    await commitCell({ expectSave: false });
     let store = await readStore(page);
     let pairRows = store.workload.filter(
       (w) =>

@@ -23,6 +23,8 @@ async function run() {
   try {
     await page.goto(BASE, { waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Wczytaj przykładowe dane' }).click();
+    // The store persists asynchronously; reading it before this lands returns null.
+    await page.waitForFunction(() => localStorage.getItem('n2hub.data.v1') !== null, null, { timeout: 10000 });
     const currentUserId = await page.evaluate(() => {
       const data = JSON.parse(localStorage.getItem('n2hub.data.v1'));
       return data.currentUserId;

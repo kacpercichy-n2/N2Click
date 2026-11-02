@@ -81,6 +81,8 @@ async function seed(page) {
   const loginRow = page.locator('.login-person').first();
   if (await loginRow.isVisible().catch(() => false)) await loginRow.click();
   await page.locator('.app-nav-link').first().waitFor({ timeout: 10000 });
+  // The store persists asynchronously; reading it before this lands returns null.
+  await page.waitForFunction(() => localStorage.getItem('n2hub.data.v1') !== null, null, { timeout: 10000 });
 }
 
 async function flowBinSplit(browser) {

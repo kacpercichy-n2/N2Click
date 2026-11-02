@@ -24,6 +24,18 @@ gate, commit and push.
 - Onboarding: `browser-check-onboarding.mjs` (including the live-plan disclosure
   and confirmation).
 
+All `scripts/browser-check-*.mjs` load Playwright and the base URL through
+`scripts/lib/browser-env.mjs`: `import('playwright')`, else `$PLAYWRIGHT_MODULE`,
+else the machine-local npx cache copy (then Chromium launches as installed
+Google Chrome, channel `chrome`; override with `BROWSER_CHECK_CHANNEL`). The
+base URL is `http://localhost:5173` unless `$BROWSER_CHECK_BASE` is set (run a
+dev server on another port while the release runner owns 5173). Every check
+seeds sample data and then waits for `n2hub.data.v1` to exist: the store is
+written after `PERSIST_COALESCE_MS` (1000 ms), so a read straight after the
+click returns null. Task card v2 has no "Zapisz i zamknij": edit, Tab out of
+the field, wait for the "Zapisano" label, then wait out the 1000 ms coalesce
+before reading the store.
+
 Run a check in Chromium and WebKit only when its covered behavior changes or a
 release verification prompt explicitly requests the full matrix.
 
