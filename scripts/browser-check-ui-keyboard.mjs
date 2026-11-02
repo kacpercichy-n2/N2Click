@@ -12,11 +12,10 @@
 // Usage: node scripts/browser-check-ui-keyboard.mjs [chromium|webkit]
 // Requires the Vite dev server on http://localhost:5173.
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const failures = [];
 
 function check(condition, label) {
@@ -32,7 +31,7 @@ async function clearPendingIntro(page) {
 }
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   try {

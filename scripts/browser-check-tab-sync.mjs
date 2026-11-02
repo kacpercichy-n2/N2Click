@@ -70,12 +70,11 @@
 //
 // Screenshots: reviews/screenshots-20260713c-persist/<engine>-*.png
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 import { mkdirSync } from 'node:fs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const KEY = 'n2hub.data.v1';
 const SHOTS = 'reviews/screenshots-20260713c-persist';
 mkdirSync(SHOTS, { recursive: true });
@@ -99,6 +98,8 @@ async function seed(page) {
   const loginRow = page.locator('.login-person').first();
   if (await loginRow.isVisible().catch(() => false)) await loginRow.click();
   await page.locator('.app-nav-link').first().waitFor({ timeout: 10000 });
+  // The store persists asynchronously; reading it before this lands returns null.
+  await page.waitForFunction(() => localStorage.getItem('n2hub.data.v1') !== null, null, { timeout: 10000 });
 }
 
 /** Poll an async predicate until it returns a truthy value or the timeout elapses. */
@@ -484,7 +485,7 @@ async function flowTabSync(browser) {
 }
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   try {
     await flowTabSync(browser);
   } finally {

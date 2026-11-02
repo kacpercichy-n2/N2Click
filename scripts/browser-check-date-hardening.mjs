@@ -19,12 +19,11 @@
 //
 // Screenshots: reviews/screenshots-20260712-datehardening/<engine>-*.png
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 import { mkdirSync } from 'node:fs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const KEY = 'n2hub.data.v1';
 const SHOTS = 'reviews/screenshots-20260712-datehardening';
 mkdirSync(SHOTS, { recursive: true });
@@ -65,6 +64,8 @@ async function seed(page) {
   const loginRow = page.locator('.login-person').first();
   if (await loginRow.isVisible().catch(() => false)) await loginRow.click();
   await page.locator('.app-nav-link').first().waitFor({ timeout: 10000 });
+  // The store persists asynchronously; reading it before this lands returns null.
+  await page.waitForFunction((key) => localStorage.getItem(key) !== null, KEY, { timeout: 10000 });
 }
 
 const readStore = (page) =>
@@ -121,6 +122,8 @@ async function flowTaskModal(browser) {
     await page.goto(`${BASE}/tasks?task=${task.id}`, { waitUntil: 'networkidle' });
     const modal = page.locator('.task-modal-card[role="dialog"]');
     await modal.waitFor({ timeout: 10000 });
+    // Karta v2: pola dat siedzą za kafelkiem „Okres".
+    await modal.locator('.task-tile-button', { hasText: 'Okres' }).click();
     // Empty start date → missing-start error. Widoczność błędu okresu jest teraz
     // bramkowana opuszczeniem pola albo próbą zapisu (kontrakt pola formularza),
     // więc po wpisaniu ZDEJMUJEMY fokus — samo pisanie celowo nie czerwieni pola.
@@ -283,7 +286,7 @@ async function flowMalformedStorage(browser) {
 }
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   try {
     await flowEmptyProjectDates(browser);
     await flowTaskModal(browser);

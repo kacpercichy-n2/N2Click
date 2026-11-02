@@ -21,7 +21,7 @@
 // Screenshots: reviews/screenshots-20260709-codex/<engine>-{01,02,03,03-freeze}.png
 // (Committed as the rerunnable regression artifact; dev server must be on :5173.)
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 import { mkdirSync } from 'node:fs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
@@ -46,7 +46,6 @@ const TARGET = TARGETS[SCENARIO] || TARGETS.free;
 const EXPECT_LAND =
   SCENARIO !== 'collision' && SCENARIO !== 'invalid' && SCENARIO !== 'oversized';
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const SHOTS = 'reviews/screenshots-20260709-codex';
 mkdirSync(SHOTS, { recursive: true });
 
@@ -66,7 +65,7 @@ async function run() {
   const pageErrors = [];
   const maxDepth = [];
 
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   const context = await browser.newContext(
     NARROW ? { viewport: { width: 1100, height: 780 } } : undefined,
   );

@@ -18,11 +18,10 @@
 // Usage: node scripts/browser-check-optical-centering.mjs [chromium|webkit]
 // Requires the Vite dev server on http://localhost:5173.
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 
 // Synthetic probes must be tight: 48 px type makes an uncorrected Plus Jakarta
 // Sans land 1.70 px low, so 0.60 px cleanly separates fixed from unfixed.
@@ -165,7 +164,7 @@ const COMPONENT_PROBES = [
 ];
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   try {

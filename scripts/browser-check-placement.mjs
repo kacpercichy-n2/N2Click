@@ -59,12 +59,11 @@
 //
 // Screenshots: reviews/screenshots-20260713b-placement/<engine>-*.png
 
-import { chromium, webkit } from 'playwright';
+import { chromium, webkit, BASE, launchOptions } from './lib/browser-env.mjs';
 import { mkdirSync } from 'node:fs';
 
 const ENGINE = (process.argv[2] || 'chromium').toLowerCase();
 const LAUNCHER = ENGINE === 'webkit' ? webkit : chromium;
-const BASE = 'http://localhost:5173';
 const KEY = 'n2hub.data.v1';
 const SHOTS = 'reviews/screenshots-20260713b-placement';
 mkdirSync(SHOTS, { recursive: true });
@@ -719,7 +718,7 @@ async function flowPlacement(browser) {
 }
 
 async function run() {
-  const browser = await LAUNCHER.launch({ headless: true });
+  const browser = await LAUNCHER.launch(launchOptions(LAUNCHER));
   try {
     await flowPlacement(browser);
   } finally {
