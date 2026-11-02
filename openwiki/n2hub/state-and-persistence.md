@@ -99,6 +99,15 @@
   must not wipe the team), the queue is cleared only on sign-out, and edits
   made during a ready-state rehydration keep queueing (maps exist) and are
   pushed right after the merge.
+  WYJĄTEK (2026-11-02, karta-v2 F3): zdarzenie z `n2click.notifications`
+  (`liveSyncRouteFor` w `src/supabase/liveSyncRoute.ts`) NIE rehydratuje
+  planera, tylko dociąga `loadNotificationsSnapshot` +
+  `MERGE_CLOUD_NOTIFICATIONS` (debounce 500 ms, te same bramki
+  `backgroundMergeDeferred` przed i po `await`). Zaplanowana albo odroczona
+  pełna synchronizacja ma pierwszeństwo; status inny niż `ready` oddaje
+  zdarzenie pełnej ścieżce. `createLatestWins` (numer pobrania brany przed
+  fetchem, w OBU ścieżkach) odrzuca starszą migawkę powiadomień, która doszła
+  po nowszej. Testy: `liveSyncRoute.test.ts`.
 - ZGŁOSZENIA (2026-07-20): kolekcja `tickets` w `AppData` (`Ticket` w
   `src/types.ts`; slugi `kind`/`priority`/`status` + polskie etykiety w
   `src/utils/tickets.ts`). Mutacje: `ADD_TICKET` / `SAVE_TICKET` /
@@ -446,6 +455,10 @@
   `MARK_NOTIFICATION_ENTRY_READ` dokłada JEDNO id (kolejność wstawień, bez
   duplikatów; brak/nieznany użytkownik, pusty lub nie-stringowy `entryId`, id
   spoza feedu i wpis już przeczytany => TA SAMA referencja, inwariant 6).
+  Wpis `notification:<id>` (rozmowa zadania) ustawia DODATKOWO `readAt`
+  własnego, nieprzeczytanego wiersza `notifications` (lustro 8d pisze
+  `read_at`), więc baza zamyka zbiorczy task_message bez czekania na zapis
+  profilu (2026-11-02, karta-v2 F3).
   `MARK_NOTIFICATIONS_SEEN` bije watermark na „teraz" i CZYŚCI zbiór (pruning —
   watermark wyraża wtedy ten sam stan). Żadna z akcji nie pisze do dziennika
   aktywności. Przeczytany wpis NIE znika z kafelka: traci kropkę i tick, zostaje
