@@ -579,8 +579,13 @@ function TimedBlockImpl({
   // Escape, pointercancel, window blur, tab hide and a mouse released outside the
   // window. Releases pointer capture defensively, drops the synchronous ref and
   // the React preview, and clears the cross-column merge affordance.
-  const cancelDrag = () => {
-    if (dragRef.current) dragSyncLog('block:cancel', { entryId: entry.id });
+  const cancelDrag = (reason?: unknown) => {
+    if (dragRef.current) {
+      dragSyncLog('block:cancel', {
+        entryId: entry.id,
+        reason: typeof reason === 'string' ? reason : (reason as Event | undefined)?.type ?? 'unknown',
+      });
+    }
     cancelRaf();
     releaseCapture();
     dragRef.current = null;
@@ -606,10 +611,10 @@ function TimedBlockImpl({
   useEffect(() => {
     if (!dragging) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelDrag();
+      if (e.key === 'Escape') cancelDrag('escape');
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') cancelDrag();
+      if (document.visibilityState === 'hidden') cancelDrag('hidden');
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('blur', cancelDrag);
@@ -753,7 +758,7 @@ function TimedBlockImpl({
     // drop synchronously, and that event's buttons are legitimately 0 — it must
     // still commit, so only a genuine pointermove may trigger the cancel.
     if (e.type === 'pointermove' && e.pointerType === 'mouse' && e.buttons === 0) {
-      cancelDrag();
+      cancelDrag('pointermove-zero-buttons');
       return null;
     }
     // Przesunięcie względem TREŚCI siatki: przewinięcie kalendarza w trakcie
@@ -923,7 +928,10 @@ function TimedBlockImpl({
     dragRef.current = null;
     setDrag(null);
     setMergeTargetId(null);
-    if (!moved.current) return; // treated as a click by onClick
+    if (!moved.current) {
+      dragSyncLog('block:no-move', { entryId: entry.id, mode: finalDrag.mode });
+      return; // treated as a click by onClick
+    }
     dragSyncLog('block:drop', {
       entryId: entry.id,
       mode: finalDrag.mode,
@@ -1819,9 +1827,14 @@ function BinCardImpl({
     return nextDrag;
   };
 
-  const cancelDrag = () => {
+  const cancelDrag = (reason?: unknown) => {
     if (!dragRef.current && !listenersRef.current) return;
-    if (dragRef.current) dragSyncLog('bin:cancel', { entryId: entry.id });
+    if (dragRef.current) {
+      dragSyncLog('bin:cancel', {
+        entryId: entry.id,
+        reason: typeof reason === 'string' ? reason : (reason as Event | undefined)?.type ?? 'unknown',
+      });
+    }
     removeWindowListeners();
     dragRef.current = null;
     setDrag(null);
@@ -1915,7 +1928,7 @@ function BinCardImpl({
         // Recovery for a mouse released outside the browser: the next move has
         // no pressed buttons even when pointerup never reached this window.
         if (pointerType === 'mouse' && event.buttons === 0) {
-          cancelDrag();
+          cancelDrag('pointermove-zero-buttons');
           return;
         }
         event.preventDefault();
