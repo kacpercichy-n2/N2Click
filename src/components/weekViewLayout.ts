@@ -136,3 +136,65 @@ export function doneTickTopPx(blockTop: number, blockHeight: number): number {
   const rested = blockTop + blockHeight - DONE_TICK_SIZE_PX - DONE_TICK_BOTTOM_PX;
   return Math.max(blockTop, rested);
 }
+
+/** Prostokąt w px ekranu (podzbiór `DOMRect`, żeby helper był czysty). */
+export interface ScreenRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function hasArea(r: ScreenRect): boolean {
+  return r.right > r.left && r.bottom > r.top;
+}
+
+/**
+ * Czy upuszczenie bloku z siatki trafia w ZASOBNIK.
+ *
+ * Dawniej strefą był wyłącznie `.week-bin-pane` (lista kart). Szybkie
+ * „rzucenie” bloku w stronę zasobnika kończyło się na jego nagłówku albo
+ * kawałek za prawą krawędzią i blok lądował z powrotem na najbliższym dniu
+ * siatki. Teraz:
+ * - tydzień (kolumna po prawej): strefą jest cały pas od lewej krawędzi
+ *   panelu w prawo, na wysokości kalendarza (`frame` = `.week-cal`, czyli
+ *   wiersz nagłówków + treść). Przelot w prawo dalej znaczy „zasobnik”.
+ * - dzień (arkusz od dołu, `sheet`): strefą jest cały arkusz z uchwytem
+ *   i nagłówkiem, nie tylko panel (w stanie `peek` panel ma kilkadziesiąt px).
+ * Prostokąt bez pola (arkusz `closed` = `display: none`) nigdy nie trafia.
+ */
+export function binDropHit(
+  x: number,
+  y: number,
+  pane: ScreenRect | null,
+  frame: ScreenRect | null,
+  sheet: boolean,
+): boolean {
+  if (sheet) {
+    const r = frame ?? pane;
+    return r !== null && hasArea(r) && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  }
+  if (pane === null || !hasArea(pane)) return false;
+  const top = frame !== null && hasArea(frame) ? Math.min(frame.top, pane.top) : pane.top;
+  const bottom =
+    frame !== null && hasArea(frame) ? Math.max(frame.bottom, pane.bottom) : pane.bottom;
+  return x >= pane.left && y >= top && y <= bottom;
+}
+
+/**
+ * Przesunięcie wskaźnika WZGLĘDEM TREŚCI siatki od początku gestu.
+ *
+ * Gest liczył samo `client - origin`, więc przewinięcie kalendarza w trakcie
+ * przeciągania albo rozciągania (kółko, bezwładność gładzika) nie zmieniało
+ * projekcji: pod kursorem był inny kwadrans, a zapis szedł starym. Siatka
+ * przewinięta o S px w dół przesuwa się na ekranie o −S, więc różnica jej
+ * pozycji dokłada się do ruchu wskaźnika.
+ */
+export function contentDelta(
+  client: number,
+  origin: number,
+  gridEdgeAtStart: number,
+  gridEdgeNow: number,
+): number {
+  return client - origin + (gridEdgeAtStart - gridEdgeNow);
+}

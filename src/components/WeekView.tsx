@@ -82,6 +82,8 @@ import {
 } from '../store/confidentiality';
 import { buildWeekModel, type BusyInterval, personDateKey } from './weekViewModel';
 import {
+  binDropHit,
+  contentDelta,
   doneTickTopPx,
   isOffHour,
   workWindowCssVars,
@@ -310,6 +312,10 @@ interface DragState {
   width: number;
   height: number;
   colWidth: number;
+  // Pozycja siatki na ekranie w chwili chwycenia: różnica do bieżącej to
+  // przewinięcie w trakcie gestu (`contentDelta`).
+  gridLeft0: number;
+  gridTop0: number;
   projStart: number; // projected startMinutes
   projHours: number; // projected plannedHours
   projDayIndex: number; // projected day column (0–6)
@@ -671,6 +677,8 @@ function TimedBlockImpl({
       width: blockRect.width,
       height: blockRect.height,
       colWidth,
+      gridLeft0: rect?.left ?? 0,
+      gridTop0: rect?.top ?? 0,
       projStart: baseStart,
       projHours: baseHours,
       projDayIndex: dayIndex,
@@ -722,7 +730,15 @@ function TimedBlockImpl({
       cancelDrag();
       return null;
     }
-    const dy = e.clientY - activeDrag.originY;
+    // Przesunięcie względem TREŚCI siatki: przewinięcie kalendarza w trakcie
+    // gestu też przesuwa kwadrans pod kursorem (dawniej ignorowane).
+    const gridNow = gridRef.current?.getBoundingClientRect();
+    const dy = contentDelta(
+      e.clientY,
+      activeDrag.originY,
+      activeDrag.gridTop0,
+      gridNow?.top ?? activeDrag.gridTop0,
+    );
     const deltaMin = snapToStep((dy / HOUR_PX) * 60);
     const baseEnd = blockEndMinutes(baseStart, baseHours);
 
@@ -734,18 +750,28 @@ function TimedBlockImpl({
     if (activeDrag.mode === 'move') {
       const dur = baseHours * 60;
       projStart = clampBlockStart(baseStart + deltaMin, dur);
-      const dx = e.clientX - activeDrag.originX;
+      const dx = contentDelta(
+        e.clientX,
+        activeDrag.originX,
+        activeDrag.gridLeft0,
+        gridNow?.left ?? activeDrag.gridLeft0,
+      );
       const dayDelta = activeDrag.colWidth > 0 ? Math.round(dx / activeDrag.colWidth) : 0;
       projDayIndex = Math.max(0, Math.min(days.length - 1, dayIndex + dayDelta));
-      // The bin panel sits outside the days grid; a pointer inside its rect
-      // targets the bin instead of a calendar day.
-      const binRect = binRef.current?.getBoundingClientRect();
-      overBin = binRect
-        ? e.clientX >= binRect.left &&
-          e.clientX <= binRect.right &&
-          e.clientY >= binRect.top &&
-          e.clientY <= binRect.bottom
-        : false;
+      // The bin sits outside the days grid. Strefą jest cały zasobnik z
+      // nagłówkiem i przelotem w prawo (tydzień) albo cały arkusz (dzień) —
+      // patrz `binDropHit`; sam panel kart był za wąskim celem przy szybkim
+      // rzucie i blok wracał na siatkę.
+      const pane = binRef.current;
+      const sheetEl = pane?.closest<HTMLElement>('.week-bin-sheet') ?? null;
+      const frameEl = sheetEl ?? pane?.closest<HTMLElement>('.week-cal') ?? null;
+      overBin = binDropHit(
+        e.clientX,
+        e.clientY,
+        pane?.getBoundingClientRect() ?? null,
+        frameEl?.getBoundingClientRect() ?? null,
+        sheetEl !== null,
+      );
     } else if (activeDrag.mode === 'top') {
       // Move the start, keep the end fixed. Min duration one step (0.25h).
       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));

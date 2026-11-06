@@ -11,7 +11,16 @@
   `dayStack.ts`, prop `stack`; `undefined` = dotychczasowa arytmetyka kolumn co
   do bajta) oraz zasobnik jako arkusz od dołu (`binRef` ZOSTAJE na
   `.week-bin-pane`; stany `closed`/`peek`/`open` różnią się WYSOKOŚCIĄ, nigdy
-  `translateY`). Sygnał „trwa przeciąganie” dla auto-peeku płynie z ISTNIEJĄCEGO
+  `translateY`). STREFA UPUSZCZENIA bloku z siatki do zasobnika (2026-11-06,
+  zgłoszenie „blok wraca na siatkę”): czysty `binDropHit` (weekViewLayout.ts);
+  tydzień = pas od lewej krawędzi `.week-bin-pane` w prawo na wysokości
+  `.week-cal` (nagłówek „Zasobnik” i przelot za prawą krawędź też trafiają),
+  dzień = cały `.week-bin-sheet` (uchwyt + nagłówek + panel); prostokąt bez
+  pola (`closed`) nigdy nie trafia. Projekcja gestu bloku liczy przesunięcie
+  względem TREŚCI siatki (`contentDelta`: różnica pozycji `gridRef` od
+  chwycenia), więc przewinięcie w trakcie przeciągania/rozciągania zmienia
+  kwadrans i dzień pod kursorem; podgląd odświeża się przy kolejnym ruchu
+  wskaźnika, zapis zawsze liczy pozycję z `pointerup`. Sygnał „trwa przeciąganie” dla auto-peeku płynie z ISTNIEJĄCEGO
   efektu `[dragging]` (`onDragActiveChange` obok `setLiveSyncHold`) i wychodzi
   natychmiast poza trybem dnia — żaden handler wskaźnika się nie zmienia
   (inwariant 7).
