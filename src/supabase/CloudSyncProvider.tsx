@@ -224,8 +224,6 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // zdarzenie czeka, koordynator sam je zdejmuje i przeplanowuje sync — bez
   // czekania na kolejne zdarzenie z zewnątrz (powrót kanału w oknie fetcha
   // zostawał zaparkowany na zawsze). Instancja per provider, nigdy singleton.
-  const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const liveSyncRef = useRef<() => void>(() => {});
   const [coord] = useState(() => {
     const c = createHydrationCoordinator({
       onStale: () => {
@@ -737,7 +735,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // zdarzenie pełnej ścieżce, która umie czekać na hydrację.
   const performNotificationsSync = useCallback(async () => {
     if (!mountedRef.current || !active) return;
-    if (liveSyncTimerRef.current !== null || pendingLiveSyncRef.current) return;
+    if (liveSyncTimerRef.current !== null || coord.hasParked()) return;
     const maps = mapsRef.current;
     if (statusRef.current !== 'ready' || maps === null) {
       liveSyncRef.current();
@@ -750,6 +748,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const owner = userIdRef.current;
     const epoch = sessionEpochRef.current;
     const ticket = notificationsLoadsRef.current.begin();
+    const writeEpochAtFetch = coord.writeEpoch();
     const result = await loadNotificationsSnapshot(getDb(), maps);
     if (!mountedRef.current || !result.available) return;
     // Zmiana konta / wylogowanie / hydracja startowa w trakcie fetchu: wynik
@@ -762,8 +761,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     ) {
       return;
     }
-    // Ta sama bramka co przed scaleniem w tle w runHydration (po `await`).
-    if (backgroundMergeDeferred()) {
+    // Ta sama bramka co przed scaleniem w tle w runHydration (po `await`),
+    // łącznie ze strażą starego snapshotu (zapis lokalny w oknie fetcha).
+    if (backgroundMergeDeferred(writeEpochAtFetch)) {
       notificationsSyncRef.current();
       return;
     }
@@ -773,7 +773,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const before = getState();
     dispatch({ type: 'MERGE_CLOUD_NOTIFICATIONS', payload: { notifications: result.notifications } });
     if (prevRef.current === before) prevRef.current = getState();
-  }, [active, backgroundMergeDeferred, getDb, getState, dispatch]);
+  }, [active, backgroundMergeDeferred, getDb, getState, dispatch, coord]);
 
   const scheduleNotificationsSync = useCallback(() => {
     if (notificationsSyncTimerRef.current !== null) clearTimeout(notificationsSyncTimerRef.current);

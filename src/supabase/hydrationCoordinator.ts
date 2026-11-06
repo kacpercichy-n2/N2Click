@@ -93,6 +93,8 @@ export interface HydrationCoordinator {
    * przebiegu w locie nastawia budzik na jego limit czasu (patrz `onStale`).
    */
   park(): void;
+  /** Czy zdarzenie czeka odłożone (bez zdejmowania go). */
+  hasParked(): boolean;
   /** Zdejmuje odłożone zdarzenie (jeśli było) i kasuje budzik; wołający ma je przeplanować. */
   takeParked(): boolean;
   /** Bilet świeżości dla rodziny pomocniczej — wołany tuż przed STARTEM jej fetcha. */
@@ -172,6 +174,7 @@ export function createHydrationCoordinator(
       parked = true;
       if (flying) armAlarm();
     },
+    hasParked: () => parked,
     takeParked: () => {
       const had = parked;
       parked = false;
