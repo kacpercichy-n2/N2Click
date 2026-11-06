@@ -30,6 +30,7 @@ import { GoogleEventDialog } from '../gcal/GoogleEventDialog';
 import type { GoogleEventOccurrence } from '../gcal/types';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
+import { dragSyncLog } from '../utils/dragSyncDebug';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   MAX_TASK_PERIOD_DAYS,
@@ -579,6 +580,7 @@ function TimedBlockImpl({
   // window. Releases pointer capture defensively, drops the synchronous ref and
   // the React preview, and clears the cross-column merge affordance.
   const cancelDrag = () => {
+    if (dragRef.current) dragSyncLog('block:cancel', { entryId: entry.id });
     cancelRaf();
     releaseCapture();
     dragRef.current = null;
@@ -922,6 +924,15 @@ function TimedBlockImpl({
     setDrag(null);
     setMergeTargetId(null);
     if (!moved.current) return; // treated as a click by onClick
+    dragSyncLog('block:drop', {
+      entryId: entry.id,
+      mode: finalDrag.mode,
+      overBin,
+      colliding,
+      date: days[projDayIndex],
+      start: projStart,
+      hours: projHours,
+    });
     if (overBin) {
       dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
       announceCalendarPractice('move');
@@ -1810,6 +1821,7 @@ function BinCardImpl({
 
   const cancelDrag = () => {
     if (!dragRef.current && !listenersRef.current) return;
+    if (dragRef.current) dragSyncLog('bin:cancel', { entryId: entry.id });
     removeWindowListeners();
     dragRef.current = null;
     setDrag(null);
@@ -1827,7 +1839,10 @@ function BinCardImpl({
     dragRef.current = null;
     setDrag(null);
     if (!moved.current) return; // plain click → onClick opens the task
-    if (!finalDrag.valid) return; // poza siatką → cichy powrót do zasobnika
+    if (!finalDrag.valid) {
+      dragSyncLog('bin:drop-outside', { entryId: entry.id });
+      return; // poza siatką → cichy powrót do zasobnika
+    }
     if (finalDrag.colliding) {
       // Snap back + widoczny POWÓD (wiersz nieplanowalny / urlop / spotkanie /
       // blok) — sama czerwień nie tłumaczy odbicia na pozornie pustym polu.
@@ -1848,6 +1863,11 @@ function BinCardImpl({
       );
       return;
     }
+    dragSyncLog('bin:drop', {
+      entryId: entry.id,
+      date: days[finalDrag.colIndex],
+      start: finalDrag.startMin,
+    });
     dispatch({
       type: 'SET_BLOCK_TIME',
       entryId: entry.id,

@@ -20,6 +20,7 @@ import {
 import { usePersistence, useStore, useStoreApi } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import { anyLiveSyncHold, shouldDeferBackgroundMerge } from '../utils/liveSyncGate';
+import { dragSyncLog, workloadGeometryDiff } from '../utils/dragSyncDebug';
 import { createLatestWins, liveSyncRouteFor } from './liveSyncRoute';
 import { reconnectDelayMs } from '../utils/liveChannel';
 import {
@@ -396,6 +397,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         if (result.aborted === true) return;
         if (!mountedRef.current) return;
         if (sessionEpochRef.current !== epoch) return;
+        dragSyncLog('queue:applied', {
+          ops: ops.length,
+          error: result.error ?? null,
+          dropped: result.dropped,
+        });
         if (result.dropped.length > 0) {
           setDropped((prev) => [...prev, ...result.dropped]);
         }
@@ -523,12 +529,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       try {
         // Epoka zapisów z chwili startu fetcha — porównana PO nim (bramka niżej).
         const writeEpochAtFetch = coord.writeEpoch();
+        dragSyncLog('hydrate:start', { run, background, writeEpoch: writeEpochAtFetch });
         const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
         // Nowszy przebieg wystartował w trakcie tego fetcha (ręczne „Odśwież”,
         // ponowienie): jego snapshot jest świeższy i to on scali. Ten porzucamy
         // BEZ przeplanowania — scalenie starszego snapshotu PO nowszym cofałoby
         // to, co nowszy właśnie przyniósł.
-        if (!owns()) return;
+        if (!owns()) {
+          dragSyncLog('hydrate:superseded', { run });
+          return;
+        }
         if (!result.ok) {
           setStatus('error');
           setError(result.error);
@@ -548,6 +558,14 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // Hydracja startowa, ręczny „Odśwież” i ponowienie po błędzie
         // (background=false) świadomie NIE pytają — jak przy blokadach.
         if (background && backgroundMergeDeferred(writeEpochAtFetch)) {
+          dragSyncLog('hydrate:deferred', {
+            run,
+            held: anyLiveSyncHold(),
+            processing: processingRef.current,
+            queued: queueRef.current.length,
+            mirrorPending: prevRef.current !== stateRef.current,
+            wroteSinceFetch: coord.wroteSince(writeEpochAtFetch),
+          });
           liveSyncRef.current();
           return;
         }
@@ -566,12 +584,18 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           merge();
           if (prevRef.current === before) prevRef.current = getState();
         };
+        const workloadBeforeMerge = getState().workload;
         advanceDiffBase(() =>
           dispatch({
             type: 'MERGE_CLOUD_ENTITIES',
             payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
           }),
         );
+        dragSyncLog('hydrate:merged', {
+          run,
+          background,
+          workloadChanged: workloadGeometryDiff(workloadBeforeMerge, getState().workload),
+        });
         // Sekcja krytyczna serializacji (fetch + scalenie planera) skończona:
         // flaga „w locie” schodzi TERAZ, nie w `finally` — loadery pomocnicze
         // niżej nie mają limitu czasu i jedno niezakończone żądanie trzymałoby
@@ -720,6 +744,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   }, [active, runHydration, backgroundMergeDeferred, coord]);
 
   const scheduleLiveSync = useCallback(() => {
+    dragSyncLog('live:scheduled');
     if (liveSyncTimerRef.current !== null) clearTimeout(liveSyncTimerRef.current);
     liveSyncTimerRef.current = setTimeout(() => {
       liveSyncTimerRef.current = null;
@@ -1067,6 +1092,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const produced = actionFor(state);
     const last = produced !== undefined ? produced.type : lastActionRef.current;
     if (last !== null && SUPPRESSED.has(last)) {
+      const swallowed = workloadGeometryDiff(prevRef.current.workload, state.workload);
+      if (swallowed.length > 0) dragSyncLog('mirror:suppressed', { action: last, workload: swallowed });
       prevRef.current = state;
       return;
     }
@@ -1085,6 +1112,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     // działającego użytkownika DLA innych odbiorców (recipient===self pomijany).
     // Kolejność bez znaczenia — `notifications` nie ma FK do zadań/projektów.
     const notifRows = userId ? notificationInsertsFromDiff(prevRef.current, state, maps, userId) : [];
+    const sentGeometry = workloadGeometryDiff(prevRef.current.workload, state.workload);
+    if (sentGeometry.length > 0) {
+      dragSyncLog('mirror:enqueue', { action: last, workload: sentGeometry, ops: ops.length });
+    }
     prevRef.current = state;
     if (ops.length === 0 && contentPlanOps.length === 0 && notifRows.length === 0) return;
     const notifOps: CloudOp[] = notifRows.map((row, i) => ({
