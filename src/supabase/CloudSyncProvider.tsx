@@ -20,6 +20,7 @@ import {
 import { usePersistence, useStore, useStoreApi } from '../store/AppStore';
 import { setCloudMirrorHealthy } from '../store/persistGate';
 import { anyLiveSyncHold, shouldDeferBackgroundMerge } from '../utils/liveSyncGate';
+import { dragSyncLog, workloadGeometryDiff } from '../utils/dragSyncDebug';
 import { createLatestWins, liveSyncRouteFor } from './liveSyncRoute';
 import { reconnectDelayMs } from '../utils/liveChannel';
 import {
@@ -57,6 +58,7 @@ import {
 import { notificationInsertsFromDiff } from './notificationEvents';
 import { buildCloudPeoplePayload, type OrgSnapshot } from './referenceData';
 import { createLiveTracker } from './liveChannelTracker';
+import { createHydrationCoordinator } from './hydrationCoordinator';
 
 export type CloudSyncStatus = 'idle' | 'hydrating' | 'ready' | 'error';
 
@@ -213,9 +215,25 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // zmieniło” — prawdą pozostaje autorytatywny snapshot (org + planer).
   const [live, setLive] = useState(false);
   const refreshingFromReadyRef = useRef(false);
-  const pendingLiveSyncRef = useRef(false);
   const liveSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveSyncRef = useRef<() => void>(() => {});
+  // Koordynator hydracji (czysty, testowalny w node — patrz
+  // hydrationCoordinator.ts): epoka zapisów lustra, numer bieżącego przebiegu
+  // z flagą „w locie” (z limitem czasu — utknięty fetch nie blokuje odświeżeń
+  // w nieskończoność), bilety świeżości rodzin pomocniczych i odłożone
+  // zdarzenie Realtime z budzikiem: gdy przebieg utknął ponad limit, a
+  // zdarzenie czeka, koordynator sam je zdejmuje i przeplanowuje sync — bez
+  // czekania na kolejne zdarzenie z zewnątrz (powrót kanału w oknie fetcha
+  // zostawał zaparkowany na zawsze). Instancja per provider, nigdy singleton.
+  const [coord] = useState(() => {
+    const c = createHydrationCoordinator({
+      onStale: () => {
+        if (c.takeParked()) liveSyncRef.current();
+      },
+    });
+    return c;
+  });
+  useEffect(() => () => coord.dispose(), [coord]);
   // Lekka ścieżka: zmiana wiersza `notifications` dociąga tylko powiadomienia
   // (L1-DB-NOTES ryzyko 5). Osobny debounce; `notificationsLoadsRef` pilnuje,
   // żeby starsza migawka (z pełnej hydracji albo lekkiej ścieżki) nie
@@ -379,6 +397,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         if (result.aborted === true) return;
         if (!mountedRef.current) return;
         if (sessionEpochRef.current !== epoch) return;
+        dragSyncLog('queue:applied', {
+          ops: ops.length,
+          error: result.error ?? null,
+          dropped: result.dropped,
+        });
         if (result.dropped.length > 0) {
           setDropped((prev) => [...prev, ...result.dropped]);
         }
@@ -402,10 +425,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       // Kolejka opróżniona bez błędu: kopia do odzysku = stan potwierdzony chmurą.
       if (retiredRef.current) retryPersistRef.current();
       // Zdarzenie Realtime odłożone na czas drenażu kolejki => dosynchronizuj.
-      if (pendingLiveSyncRef.current) {
-        pendingLiveSyncRef.current = false;
-        liveSyncRef.current();
-      }
+      if (coord.takeParked()) liveSyncRef.current();
     } finally {
       processingRef.current = false;
       // W `finally`, bo strażniki zmiany konta wychodzą z pętli przez `return`
@@ -429,21 +449,25 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         void processQueue();
       }
     }
-  }, [setPending, persistOutbox, getPinnedAdapters]);
+  }, [setPending, persistOutbox, getPinnedAdapters, coord]);
 
   // Migawka „czy wolno TERAZ zastosować scalenie w tle”. Czyta wyłącznie żywe
   // refy, więc każde wywołanie widzi bieżący świat — wołana ponownie po każdym
   // `await` w ścieżce żywej synchronizacji, bo szybki gest przeciągania mieści
   // się w całości w oknie fetcha snapshotu (patrz shouldDeferBackgroundMerge).
+  // `writeEpochAtFetch` (tylko w kontroli PO fetchu): epoka zapisów lustra z
+  // chwili startu pobierania — różnica od bieżącej znaczy snapshot starszy od
+  // stanu lokalnego (patrz hydrationCoordinator.ts).
   const backgroundMergeDeferred = useCallback(
-    () =>
+    (writeEpochAtFetch?: number) =>
       shouldDeferBackgroundMerge({
         held: anyLiveSyncHold(),
         processing: processingRef.current,
         queuedOps: queueRef.current.length,
         mirrorPending: prevRef.current !== stateRef.current,
+        wroteSinceFetch: writeEpochAtFetch !== undefined && coord.wroteSince(writeEpochAtFetch),
       }),
-    [],
+    [coord],
   );
 
   const runHydration = useCallback(
@@ -451,10 +475,18 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       const snap =
         overrideSnap ?? (org.state.status === 'ready' ? org.state.snapshot : null);
       if (auth.mode !== 'supabase' || !userId || !snap) return;
+      // Stare domknięcie (kontynuacja po `await` sprzed zmiany konta /
+      // wylogowania) niesie `userId` i zapasowy snapshot organizacji POPRZEDNIEJ
+      // tożsamości — nie wolno mu zacząć przebiegu w nowej sesji.
+      if (userIdRef.current !== userId) return;
       // Odświeżenie ze stanu 'ready' (ręczne lub Realtime): lustro ma już mapy,
       // więc edycje wykonane w oknie hydracji dalej trafiają do kolejki zamiast
       // być pochłaniane i nadpisywane autorytatywnym scaleniem.
-      const fromReady = statusRef.current === 'ready';
+      // Odświeżenie zaczęte w OKNIE innego odświeżenia ze stanu 'ready'
+      // (status już 'hydrating', ale mapy są i edycje idą do kolejki) dziedziczy
+      // tę własność — inaczej drugi „Odśwież” zbijałby flagę i edycje z jego
+      // okna byłyby połykane zamiast lustrowane.
+      const fromReady = statusRef.current === 'ready' || refreshingFromReadyRef.current;
       refreshingFromReadyRef.current = fromReady;
       // BEZSZWOWO: odświeżenie w tle (Realtime) NIE zrzuca statusu do
       // 'hydrating' — inaczej baner „Wczytywanie danych z serwera…” pojawiał
@@ -467,9 +499,46 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       setError(null);
       const maps = buildCloudIdMaps(stateRef.current, snap);
       mapsRef.current = maps;
+      // Ten przebieg staje się bieżącym; poprzedni (jeśli jeszcze czeka na
+      // fetch) rozpozna to po numerze i porzuci swój, starszy snapshot.
+      const run = coord.begin();
+      // Epoka SESJI z chwili startu: wylogowanie / zmiana konta w trakcie
+      // fetcha znaczy, że wynik należy do poprzedniej tożsamości i nie wolno
+      // go scalić (parytet z drenażem kolejki).
+      const sessionEpoch = sessionEpochRef.current;
+      // Czy wynik z tego przebiegu wolno jeszcze dotknąć stanu: zamontowany
+      // i ta sama sesja (`alive`), a dla snapshotu planera i statusu 'ready'
+      // dodatkowo bieżący — nikt nowszy nie wystartował (`owns`). Pytamy po
+      // KAŻDYM `await`. Rodziny pomocnicze (powiadomienia, Content Plan)
+      // zamiast `owns` używają biletów per rodzina wydawanych na STARCIE
+      // fetcha (`coord.openFetch` + `coord.claim`): wynik fetcha, który
+      // wystartował później, ląduje, a spóźniony odpada — bez cofania nowszego
+      // i bez głodzenia przy serii odświeżeń w tle.
+      const alive = (): boolean =>
+        mountedRef.current && sessionEpochRef.current === sessionEpoch;
+      const owns = (): boolean => alive() && coord.isCurrent(run);
+      // Zwolnienie flagi „w locie” + przeplanowanie odłożonego zdarzenia
+      // Realtime (przy niepustej kolejce zrobi to ogon processQueue po
+      // potwierdzeniu zapisów). Idempotentne; zwalnia tylko bieżący przebieg.
+      const releaseRun = (): void => {
+        if (!coord.release(run)) return;
+        if (queueRef.current.length === 0 && mountedRef.current && coord.takeParked()) {
+          liveSyncRef.current();
+        }
+      };
       try {
+        // Epoka zapisów z chwili startu fetcha — porównana PO nim (bramka niżej).
+        const writeEpochAtFetch = coord.writeEpoch();
+        dragSyncLog('hydrate:start', { run, background, writeEpoch: writeEpochAtFetch });
         const result = await loadPlannerSnapshot(getDb(), maps, stateRef.current);
-        if (!mountedRef.current) return;
+        // Nowszy przebieg wystartował w trakcie tego fetcha (ręczne „Odśwież”,
+        // ponowienie): jego snapshot jest świeższy i to on scali. Ten porzucamy
+        // BEZ przeplanowania — scalenie starszego snapshotu PO nowszym cofałoby
+        // to, co nowszy właśnie przyniósł.
+        if (!owns()) {
+          dragSyncLog('hydrate:superseded', { run });
+          return;
+        }
         if (!result.ok) {
           setStatus('error');
           setError(result.error);
@@ -480,13 +549,23 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         }
         // Ostatnia bramka przed scaleniem W TLE: fetch snapshotu trwał setki ms
         // i świat mógł się zmienić — nowy gest przeciągania, świeża lokalna
-        // edycja (jeszcze przed diffem lustra) albo drenaż kolejki. Snapshot
+        // edycja (jeszcze przed diffem lustra), drenaż kolejki albo zapis, który
+        // od startu fetcha zdążył WYJŚĆ I SIĘ POTWIERDZIĆ (epoka zapisów lustra:
+        // kolejka już pusta, a snapshot liczony przed nim). Snapshot
         // jest wtedy STARSZY od stanu lokalnego; jego dispatch cofnąłby
         // upuszczoną przed chwilą kartę na bazową pozycję. Odraczamy tym samym
         // debounce'em — kolejny przebieg zobaczy już wypchnięte zmiany.
         // Hydracja startowa, ręczny „Odśwież” i ponowienie po błędzie
         // (background=false) świadomie NIE pytają — jak przy blokadach.
-        if (background && backgroundMergeDeferred()) {
+        if (background && backgroundMergeDeferred(writeEpochAtFetch)) {
+          dragSyncLog('hydrate:deferred', {
+            run,
+            held: anyLiveSyncHold(),
+            processing: processingRef.current,
+            queued: queueRef.current.length,
+            mirrorPending: prevRef.current !== stateRef.current,
+            wroteSinceFetch: coord.wroteSince(writeEpochAtFetch),
+          });
           liveSyncRef.current();
           return;
         }
@@ -505,24 +584,38 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
           merge();
           if (prevRef.current === before) prevRef.current = getState();
         };
+        const workloadBeforeMerge = getState().workload;
         advanceDiffBase(() =>
           dispatch({
             type: 'MERGE_CLOUD_ENTITIES',
             payload: { ...result.payload, people: buildCloudPeoplePayload(snap.profiles) },
           }),
         );
+        dragSyncLog('hydrate:merged', {
+          run,
+          background,
+          workloadChanged: workloadGeometryDiff(workloadBeforeMerge, getState().workload),
+        });
+        // Sekcja krytyczna serializacji (fetch + scalenie planera) skończona:
+        // flaga „w locie” schodzi TERAZ, nie w `finally` — loadery pomocnicze
+        // niżej nie mają limitu czasu i jedno niezakończone żądanie trzymałoby
+        // każdą kolejną żywą synchronizację odłożoną na zawsze.
+        releaseRun();
         // Powiadomienia in-app: OSOBNY loader — nie blokuje reszty syncu ani
         // statusu. Brak tabeli (migracja niezaaplikowana) => `available` z []
         // (podmiana autorytatywna). Błąd PRZEJŚCIOWY => `available: false`:
         // NIE dispatchujemy scalenia, zostawiamy poprzedni stan (panel nie miga
         // pustką na chwilowym błędzie sieci).
-        const notifTicket = notificationsLoadsRef.current.begin();
+        const notifTicket = coord.openFetch('notifications');
+        const latestTicket = notificationsLoadsRef.current.begin();
         const notifResult = await loadNotificationsSnapshot(getDb(), maps);
-        // `claim` na końcu: tylko gdy wynik naprawdę scalamy.
+        if (!alive()) return;
+        // Dwie straże świeżości: bilet koordynatora (przebiegi pełnej
+        // hydracji) i `createLatestWins` (wspólna z lekką ścieżką powiadomień).
         if (
-          mountedRef.current &&
           notifResult.available &&
-          notificationsLoadsRef.current.claim(notifTicket)
+          coord.claim('notifications', notifTicket) &&
+          notificationsLoadsRef.current.claim(latestTicket)
         ) {
           advanceDiffBase(() =>
             dispatch({
@@ -535,8 +628,13 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         // schematu/tabel (migracja niezaaplikowana) => `available` z pustymi
         // kolekcjami, błąd PRZEJŚCIOWY => brak dispatchu (zostaje poprzedni stan).
         // Nie wpływa na status ani na resztę syncu.
+        // Bilet z chwili STARTU tego fetcha, nie numer przebiegu: Content Plan
+        // startuje po powiadomieniach, więc starszy przebieg z wolnymi
+        // powiadomieniami zaczyna go później (świeżej) niż nowszy.
+        const contentPlanTicket = coord.openFetch('contentPlan');
         const contentPlanResult = await loadContentPlanSnapshot(getContentPlanDb());
-        if (mountedRef.current && contentPlanResult.available) {
+        if (!alive()) return;
+        if (contentPlanResult.available && coord.claim('contentPlan', contentPlanTicket)) {
           advanceDiffBase(() =>
             dispatch({
               type: 'MERGE_CLOUD_CONTENT_PLAN',
@@ -544,6 +642,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
             }),
           );
         }
+        // Status 'ready' i ogon tła ustawia wyłącznie BIEŻĄCY przebieg — nowszy
+        // (który nas wyprzedził) zrobi to sam po swoim scaleniu.
+        if (!owns()) return;
         setStatus('ready');
         // Odświeżenie w tle nie przechodzi przez krawędź 'hydrating'→'ready',
         // więc efekt na krawędzi statusu nie odpali: świeżą kopię do odzysku
@@ -554,16 +655,20 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
         }
         // Edycje zakolejkowane w oknie hydracji: wypchnij od razu — pętla
         // Realtime (nasz własny zapis => zdarzenie => hydracja) je uzgodni.
+        // Odłożone zdarzenie Realtime rozlicza `finally` niżej (także na
+        // ścieżkach wczesnego wyjścia), a przy niepustej kolejce — ogon
+        // processQueue po potwierdzeniu zapisów.
         if (queueRef.current.length > 0) {
           void processQueue();
-        } else if (pendingLiveSyncRef.current) {
-          // Zdarzenie Realtime nadeszło w trakcie tej hydracji => po commitcie
-          // (statusRef juz 'ready') dosynchronizuj z debounce.
-          pendingLiveSyncRef.current = false;
-          liveSyncRef.current();
         }
       } finally {
-        refreshingFromReadyRef.current = false;
+        // Tylko BIEŻĄCY przebieg zamyka flagi — starszy, porzucony po fetchu,
+        // nie może zdjąć „w locie” ani `refreshingFromReady` spod nowszego.
+        // Zdarzenie Realtime odłożone w trakcie hydracji rusza stąd z debounce
+        // (po commitcie statusRef jest już 'ready'); przy niepustej kolejce
+        // zrobi to ogon processQueue, gdy zapisy się potwierdzą.
+        if (coord.isCurrent(run)) refreshingFromReadyRef.current = false;
+        releaseRun();
       }
     },
     [
@@ -576,6 +681,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       getContentPlanDb,
       processQueue,
       backgroundMergeDeferred,
+      coord,
     ],
   );
 
@@ -584,12 +690,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // drenaż kolejki / hydracja — dokańczana z ogonów processQueue/runHydration.
   const performLiveSync = useCallback(async () => {
     if (!mountedRef.current || !active) return;
+    // Hydracja W LOCIE (także ta w tle, która nie zmienia statusu) odkłada
+    // zdarzenie: dosynchronizuje je ogon runHydration — bez drugiego,
+    // równoległego fetcha, którego STARSZY wynik mógłby wygrać z nowszym.
     if (
       processingRef.current ||
       queueRef.current.length > 0 ||
-      statusRef.current !== 'ready'
+      statusRef.current !== 'ready' ||
+      coord.inFlight()
     ) {
-      pendingLiveSyncRef.current = true;
+      coord.park();
       return;
     }
     // Trwa interakcja wrażliwa na stabilność (przeciąganie bloku kalendarza lub
@@ -601,8 +711,17 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       liveSyncRef.current();
       return;
     }
+    // Numer ostatniego przebiegu PRZED fetchem organizacji: jeśli w jego oknie
+    // ruszyła i skończyła się inna hydracja, nasz snapshot organizacji (zespół,
+    // słowniki → mapy id, profile) jest od niej STARSZY — nie hydrujemy na nim,
+    // tylko przeplanowujemy po świeży.
+    const latestRunBefore = coord.latestRun();
+    // Epoka sesji sprzed fetcha organizacji: zmiana konta / wylogowanie w jego
+    // oknie unieważnia tę kontynuację (stare domknięcie runHydration ma
+    // zapasowy snapshot organizacji poprzedniego konta).
+    const sessionEpoch = sessionEpochRef.current;
     const snap = await orgRefreshRef.current();
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || sessionEpochRef.current !== sessionEpoch) return;
     // Fetch organizacji trwał — bramka raz jeszcze, zanim ruszy hydracja
     // planera (drugi, dłuższy fetch). Szybkie chwyć–puść karty zasobnika
     // potrafi zacząć się i skończyć w tym oknie.
@@ -610,10 +729,22 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       liveSyncRef.current();
       return;
     }
+    // Hydracja mogła wystartować w oknie fetcha organizacji (ręczne „Odśwież”):
+    // nie dublujemy jej — odkładamy jak na wejściu. Jeśli zdążyła się skończyć,
+    // nasz snapshot organizacji jest starszy od jej wyniku — świeży przebieg.
+    if (coord.inFlight()) {
+      coord.park();
+      return;
+    }
+    if (!coord.isCurrent(latestRunBefore)) {
+      liveSyncRef.current();
+      return;
+    }
     await runHydration(snap ?? undefined, { background: true });
-  }, [active, runHydration, backgroundMergeDeferred]);
+  }, [active, runHydration, backgroundMergeDeferred, coord]);
 
   const scheduleLiveSync = useCallback(() => {
+    dragSyncLog('live:scheduled');
     if (liveSyncTimerRef.current !== null) clearTimeout(liveSyncTimerRef.current);
     liveSyncTimerRef.current = setTimeout(() => {
       liveSyncTimerRef.current = null;
@@ -629,7 +760,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   // zdarzenie pełnej ścieżce, która umie czekać na hydrację.
   const performNotificationsSync = useCallback(async () => {
     if (!mountedRef.current || !active) return;
-    if (liveSyncTimerRef.current !== null || pendingLiveSyncRef.current) return;
+    if (liveSyncTimerRef.current !== null || coord.hasParked()) return;
     const maps = mapsRef.current;
     if (statusRef.current !== 'ready' || maps === null) {
       liveSyncRef.current();
@@ -642,6 +773,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const owner = userIdRef.current;
     const epoch = sessionEpochRef.current;
     const ticket = notificationsLoadsRef.current.begin();
+    const writeEpochAtFetch = coord.writeEpoch();
     const result = await loadNotificationsSnapshot(getDb(), maps);
     if (!mountedRef.current || !result.available) return;
     // Zmiana konta / wylogowanie / hydracja startowa w trakcie fetchu: wynik
@@ -654,8 +786,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     ) {
       return;
     }
-    // Ta sama bramka co przed scaleniem w tle w runHydration (po `await`).
-    if (backgroundMergeDeferred()) {
+    // Ta sama bramka co przed scaleniem w tle w runHydration (po `await`),
+    // łącznie ze strażą starego snapshotu (zapis lokalny w oknie fetcha).
+    if (backgroundMergeDeferred(writeEpochAtFetch)) {
       notificationsSyncRef.current();
       return;
     }
@@ -665,7 +798,7 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const before = getState();
     dispatch({ type: 'MERGE_CLOUD_NOTIFICATIONS', payload: { notifications: result.notifications } });
     if (prevRef.current === before) prevRef.current = getState();
-  }, [active, backgroundMergeDeferred, getDb, getState, dispatch]);
+  }, [active, backgroundMergeDeferred, getDb, getState, dispatch, coord]);
 
   const scheduleNotificationsSync = useCallback(() => {
     if (notificationsSyncTimerRef.current !== null) clearTimeout(notificationsSyncTimerRef.current);
@@ -851,6 +984,9 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!active) {
       hydratedUserRef.current = null;
+      // Okno odświeżania ze stanu 'ready' nie może przeżyć sesji: następna
+      // hydracja startowa (po ponownym logowaniu) zaczyna od czystej flagi.
+      refreshingFromReadyRef.current = false;
       prevRef.current = stateRef.current;
       // Kolejkę kasujemy TYLKO przy braku sesji (wylogowanie / zmiana konta).
       // Chwilowy brak snapshotu przy tym samym użytkowniku (reload organizacji)
@@ -956,6 +1092,8 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     const produced = actionFor(state);
     const last = produced !== undefined ? produced.type : lastActionRef.current;
     if (last !== null && SUPPRESSED.has(last)) {
+      const swallowed = workloadGeometryDiff(prevRef.current.workload, state.workload);
+      if (swallowed.length > 0) dragSyncLog('mirror:suppressed', { action: last, workload: swallowed });
       prevRef.current = state;
       return;
     }
@@ -974,6 +1112,10 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     // działającego użytkownika DLA innych odbiorców (recipient===self pomijany).
     // Kolejność bez znaczenia — `notifications` nie ma FK do zadań/projektów.
     const notifRows = userId ? notificationInsertsFromDiff(prevRef.current, state, maps, userId) : [];
+    const sentGeometry = workloadGeometryDiff(prevRef.current.workload, state.workload);
+    if (sentGeometry.length > 0) {
+      dragSyncLog('mirror:enqueue', { action: last, workload: sentGeometry, ops: ops.length });
+    }
     prevRef.current = state;
     if (ops.length === 0 && contentPlanOps.length === 0 && notifRows.length === 0) return;
     const notifOps: CloudOp[] = notifRows.map((row, i) => ({
@@ -983,12 +1125,16 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
       sourceId: `notif:${row.recipient_id}:${row.type}:${i}`,
       label: 'Powiadomienie',
     }));
+    // Lokalna zmiana wychodzi do chmury: podbij epokę zapisów — hydracja w tle,
+    // której fetch wystartował wcześniej, rozpozna po niej, że jej snapshot
+    // jest starszy od stanu (patrz hydrationCoordinator.ts).
+    coord.noteLocalWrite();
     queueRef.current.push(...ops, ...contentPlanOps, ...notifOps);
     queueOwnerRef.current = userId;
     setPending(queueRef.current.length);
     persistOutbox();
     void processQueue();
-  }, [state, active, userId, lastActionRef, actionFor, processQueue, setPending]);
+  }, [state, active, userId, lastActionRef, actionFor, processQueue, setPending, coord]);
 
   const retry = useCallback(() => {
     if (statusRef.current === 'error') {
@@ -1005,8 +1151,11 @@ export function CloudSyncProvider({ children }: { children: ReactNode }) {
     // organizacji (zespół/słowniki/avatary), potem hydracja planera na świeżym
     // snapshocie — bez zrzucania org do 'loading' (kolejka i aktywność zostają).
     void (async () => {
+      // Jak w performLiveSync: zmiana konta w oknie fetcha organizacji
+      // unieważnia kontynuację (runHydration sprawdza to też po `userId`).
+      const sessionEpoch = sessionEpochRef.current;
       const snap = await orgRefreshRef.current();
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || sessionEpochRef.current !== sessionEpoch) return;
       await runHydration(snap ?? undefined);
     })();
   }, [runHydration, error]);

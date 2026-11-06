@@ -108,6 +108,49 @@
   zdarzenie pełnej ścieżce. `createLatestWins` (numer pobrania brany przed
   fetchem, w OBU ścieżkach) odrzuca starszą migawkę powiadomień, która doszła
   po nowszej. Testy: `liveSyncRoute.test.ts`.
+  HYDRATION COORDINATOR (2026-09-16,
+  `src/supabase/hydrationCoordinator.ts`, pure, tested in
+  `hydrationCoordinator.test.ts`; one instance per provider): (a) STALE-SNAPSHOT
+  GUARD — the mirror effect calls `noteLocalWrite()` whenever it enqueues ops;
+  `runHydration` captures `writeEpoch()` right before `loadPlannerSnapshot` and
+  the post-fetch gate (`shouldDeferBackgroundMerge` in
+  `src/utils/liveSyncGate.ts`, new `wroteSinceFetch`) defers the merge when a
+  write went out since — the snapshot was computed BEFORE a local write that
+  has already drained (empty queue, clean mirror, invisible to the older
+  checks), so merging it reverted the fresh edit for one cycle (the
+  „wykonane"/COMPLETE_TASK green→blue→green flicker). (b) SERIALIZED RUNS —
+  `begin()` numbers each hydration and raises `inFlight()` (with a deadline:
+  the planner fetch has no timeout, so a run stuck longer than
+  `DEFAULT_HYDRATION_STALE_MS` = 30 s stops blocking, and once a fresh run
+  begins the stuck run's late result is dropped by `isCurrent`; an event
+  parked behind an in-flight run arms a wake-up at that deadline — injected
+  `schedule`/`cancel`, `onStale` in the provider takes the parked event and
+  reschedules the sync — so a reconnect landing inside a hung fetch recovers
+  without another external event; normal release, `takeParked` and `dispose`
+  cancel it); `performLiveSync`
+  parks the Realtime event (`park()`) while a run is in flight (also background
+  runs, which never leave `ready`) or when a run started and finished during
+  its org refetch (its org snapshot is older: reschedule). A run asks `alive()`
+  (mounted + same session epoch) after EVERY await and `owns()` (`alive` +
+  `isCurrent(run)`) before the planner merge and before setting `ready`, so a
+  superseded or signed-out run drops its planner snapshot and never sets
+  `ready` under the newer run; a stale closure whose `userId` no longer
+  matches `userIdRef` never starts a run, and `refresh`/`performLiveSync`
+  abort when the session epoch changes during the org refetch. Notifications
+  and content plan use per-family monotonic claims instead, ticketed at fetch
+  START (`openFetch(family)` right before the load, `claim(family, ticket)`
+  before the dispatch), not by run number, because content plan is fetched
+  after notifications and an older run with slow notifications can start its
+  content-plan fetch later (fresher) than a newer run: the payload of the
+  later-started fetch lands, a payload arriving after it is dropped — no
+  reverting and no starvation during a burst of background runs. The flag
+  is released (`release(run)`, current run only, idempotent) right AFTER the
+  planner merge — not in `finally` — because the auxiliary loaders have no
+  timeout and one hung request would park every future live sync; `finally`
+  releases again for early exits and fires the parked event (`takeParked()`,
+  only with an empty queue; otherwise processQueue's tail does it). A refresh
+  started inside another refresh-from-ready inherits `refreshingFromReady`, so
+  edits in that window keep queueing.
 - ZGŁOSZENIA (2026-07-20): kolekcja `tickets` w `AppData` (`Ticket` w
   `src/types.ts`; slugi `kind`/`priority`/`status` + polskie etykiety w
   `src/utils/tickets.ts`). Mutacje: `ADD_TICKET` / `SAVE_TICKET` /

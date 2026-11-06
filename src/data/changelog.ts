@@ -90,6 +90,39 @@ export function changelogUnreadCount(
 /** Dziennik zmian — NAJNOWSZY WPIS NA GÓRZE. */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-11-06-przeciaganie-bez-cofania',
+    dateFrom: '2026-11-06',
+    dateTo: '2026-11-06',
+    summary:
+      'Przeciąganie w kalendarzu nie cofa się już przy szybkiej pracy, także gładzikiem: upuszczona karta, rozciągnięty blok i blok oddany do zasobnika zostają tam, gdzie je puścisz.',
+    items: [
+      {
+        area: 'Kalendarz',
+        feature: 'Odświeżenie z serwera nie cofa ruchu',
+        description:
+          'Kalendarz co chwilę pobiera świeże dane z serwera. Ruch zrobiony w trakcie takiego pobierania (karta z zasobnika na siatkę, rozciągnięcie bloku, oddanie bloku do zasobnika) potrafiły cofnąć dane sprzed tego ruchu. Teraz takie odświeżenie czeka na wersję, która zna już Twój ruch, a dwa odświeżenia nie nachodzą na siebie. To samo usuwa migotanie zielonego ptaszka po „wykonane”.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Szybkie przeciągnięcie gładzikiem',
+        description:
+          'Na gładziku Maca bardzo szybkie przeciągnięcie bloku albo karty z zasobnika potrafiło wrócić na start, bo przeglądarka zgłaszała puszczenie przycisku chwilę przed właściwym puszczeniem. Kalendarz czeka teraz na to puszczenie i zapisuje ruch tam, gdzie go skończysz.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Większy cel „Zasobnik”',
+        description:
+          'Blok oddajesz do zasobnika, puszczając go na nagłówku „Zasobnik”, na liście kart albo nawet kawałek za prawą krawędzią. Wcześniej liczyła się tylko lista kart, a puszczenie obok przenosiło blok na najbliższy dzień. Na telefonie celem jest cały wysunięty arkusz.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Przewijanie w trakcie przeciągania',
+        description:
+          'Gdy przewijasz kalendarz, trzymając blok, nowa godzina i długość liczą się od miejsca pod kursorem, a nie od miejsca sprzed przewinięcia.',
+      },
+    ],
+  },
+  {
     id: '2026-09-15-zgloszenia-wrzesien',
     dateFrom: '2026-09-15',
     dateTo: '2026-09-15',

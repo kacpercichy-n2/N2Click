@@ -30,6 +30,7 @@ import { GoogleEventDialog } from '../gcal/GoogleEventDialog';
 import type { GoogleEventOccurrence } from '../gcal/types';
 import { personColor } from '../utils/colors';
 import { clearLiveSyncHold, setLiveSyncHold } from '../utils/liveSyncGate';
+import { dragSyncLog } from '../utils/dragSyncDebug';
 import { useTouchDragGate } from '../utils/useTouchDragGate';
 import {
   MAX_TASK_PERIOD_DAYS,
@@ -82,6 +83,8 @@ import {
 } from '../store/confidentiality';
 import { buildWeekModel, type BusyInterval, personDateKey } from './weekViewModel';
 import {
+  binDropHit,
+  contentDelta,
   doneTickTopPx,
   isOffHour,
   workWindowCssVars,
@@ -294,6 +297,17 @@ function statusNoteFor(status: 'done' | 'overdue' | 'open', endDate: string): st
 
 type DragMode = 'move' | 'top' | 'bottom';
 
+/**
+ * Okno łaski na puszczenie przycisku (2026-11-06, ślad z gładzika Kacpra):
+ * Chrome na macOS przy szybkim puszczeniu wysyła NAJPIERW `lostpointercapture`
+ * i `pointermove` z `buttons === 0`, a właściwy `pointerup` dopiero ~16 ms
+ * później i już do elementu pod kursorem (kolumna dnia), nie do bloku. Dawna
+ * heurystyka „mysz bez przycisku = puszczono poza oknem” anulowała wtedy gest.
+ * Teraz taki sygnał tylko otwiera okno: `pointerup`/`mouseup` w dowolnym
+ * miejscu okna w tym czasie kończy gest normalnie, brak = anulowanie.
+ */
+const RELEASE_GRACE_MS = 150;
+
 interface DragState {
   mode: DragMode;
   originX: number;
@@ -310,6 +324,10 @@ interface DragState {
   width: number;
   height: number;
   colWidth: number;
+  // Pozycja siatki na ekranie w chwili chwycenia: różnica do bieżącej to
+  // przewinięcie w trakcie gestu (`contentDelta`).
+  gridLeft0: number;
+  gridTop0: number;
   projStart: number; // projected startMinutes
   projHours: number; // projected plannedHours
   projDayIndex: number; // projected day column (0–6)
@@ -572,7 +590,45 @@ function TimedBlockImpl({
   // Escape, pointercancel, window blur, tab hide and a mouse released outside the
   // window. Releases pointer capture defensively, drops the synchronous ref and
   // the React preview, and clears the cross-column merge affordance.
-  const cancelDrag = () => {
+  // Okno łaski (patrz RELEASE_GRACE_MS): nasłuchy okna na puszczenie +
+  // zegar anulowania. Jedno naraz; sprzątane przez finish, cancelDrag i
+  // odmontowanie.
+  const graceRef = useRef<{ timer: number; up: (ev: Event) => void } | null>(null);
+  const clearGrace = () => {
+    const g = graceRef.current;
+    if (!g) return;
+    window.clearTimeout(g.timer);
+    window.removeEventListener('pointerup', g.up, true);
+    window.removeEventListener('mouseup', g.up, true);
+    graceRef.current = null;
+  };
+  const armReleaseGrace = (reason: string) => {
+    if (graceRef.current || !dragRef.current) return;
+    dragSyncLog('block:release-grace', { entryId: entry.id, reason });
+    const up = (ev: Event) => {
+      clearGrace();
+      // Natywne zdarzenie okna niesie te same pola, których używa projekcja
+      // (`type`, `clientX/Y`); `type !== 'pointermove'` = zwykłe zakończenie.
+      finish(ev as unknown as React.PointerEvent);
+    };
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('mouseup', up, true);
+    const timer = window.setTimeout(() => {
+      clearGrace();
+      cancelDrag('released-outside');
+    }, RELEASE_GRACE_MS);
+    graceRef.current = { timer, up };
+  };
+  useEffect(() => () => clearGrace(), []);
+
+  const cancelDrag = (reason?: unknown) => {
+    clearGrace();
+    if (dragRef.current) {
+      dragSyncLog('block:cancel', {
+        entryId: entry.id,
+        reason: typeof reason === 'string' ? reason : (reason as Event | undefined)?.type ?? 'unknown',
+      });
+    }
     cancelRaf();
     releaseCapture();
     dragRef.current = null;
@@ -598,10 +654,10 @@ function TimedBlockImpl({
   useEffect(() => {
     if (!dragging) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelDrag();
+      if (e.key === 'Escape') cancelDrag('escape');
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') cancelDrag();
+      if (document.visibilityState === 'hidden') cancelDrag('hidden');
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('blur', cancelDrag);
@@ -632,6 +688,30 @@ function TimedBlockImpl({
       if (dragging) onDragActiveChange?.(false);
     };
   }, [dragging, holdKey, onDragActiveChange]);
+
+  // Przewinięcie siatki w trakcie gestu (kółko, bezwładność gładzika) nie daje
+  // `pointermove`, więc podgląd zostawał na starym kwadransie, a `finish` i tak
+  // zapisywał pozycję pod kursorem. Ten OBSERWATOR przelicza projekcję z
+  // ostatnich współrzędnych wskaźnika przy każdym przewinięciu. Bierny nasłuch
+  // `scroll`, bez przechwycenia i bez udziału w sprzątaniu gestu (inwariant 7).
+  const projectMoveRef = useRef<(e: React.PointerEvent) => DragState | null>(() => null);
+  useEffect(() => {
+    if (!dragging) return;
+    const scroller = gridRef.current?.closest<HTMLElement>('.week-days-viewport') ?? null;
+    if (!scroller) return;
+    const onScroll = () => {
+      const d = dragRef.current;
+      if (!d) return;
+      // `type: 'scroll'` omija heurystykę „mysz bez wciśniętych przycisków”,
+      // która dotyczy wyłącznie prawdziwego `pointermove`.
+      const synthetic = { type: 'scroll', clientX: d.clientX, clientY: d.clientY };
+      if (projectMoveRef.current(synthetic as unknown as React.PointerEvent)) scheduleFlush();
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onScroll);
+    // scheduleFlush czyta wyłącznie refy; gridRef jest stabilny.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging]);
 
   // Deferred drag start. `init` is captured SYNCHRONOUSLY in the handler because
   // React nulls `e.currentTarget` after dispatch — the touch path runs this only
@@ -671,6 +751,8 @@ function TimedBlockImpl({
       width: blockRect.width,
       height: blockRect.height,
       colWidth,
+      gridLeft0: rect?.left ?? 0,
+      gridTop0: rect?.top ?? 0,
       projStart: baseStart,
       projHours: baseHours,
       projDayIndex: dayIndex,
@@ -719,10 +801,20 @@ function TimedBlockImpl({
     // drop synchronously, and that event's buttons are legitimately 0 — it must
     // still commit, so only a genuine pointermove may trigger the cancel.
     if (e.type === 'pointermove' && e.pointerType === 'mouse' && e.buttons === 0) {
-      cancelDrag();
+      armReleaseGrace('pointermove-zero-buttons');
       return null;
     }
-    const dy = e.clientY - activeDrag.originY;
+    // Ruch z wciśniętym przyciskiem po fałszywym alarmie: gest trwa dalej.
+    if (e.type === 'pointermove' && graceRef.current) clearGrace();
+    // Przesunięcie względem TREŚCI siatki: przewinięcie kalendarza w trakcie
+    // gestu też przesuwa kwadrans pod kursorem (dawniej ignorowane).
+    const gridNow = gridRef.current?.getBoundingClientRect();
+    const dy = contentDelta(
+      e.clientY,
+      activeDrag.originY,
+      activeDrag.gridTop0,
+      gridNow?.top ?? activeDrag.gridTop0,
+    );
     const deltaMin = snapToStep((dy / HOUR_PX) * 60);
     const baseEnd = blockEndMinutes(baseStart, baseHours);
 
@@ -734,18 +826,28 @@ function TimedBlockImpl({
     if (activeDrag.mode === 'move') {
       const dur = baseHours * 60;
       projStart = clampBlockStart(baseStart + deltaMin, dur);
-      const dx = e.clientX - activeDrag.originX;
+      const dx = contentDelta(
+        e.clientX,
+        activeDrag.originX,
+        activeDrag.gridLeft0,
+        gridNow?.left ?? activeDrag.gridLeft0,
+      );
       const dayDelta = activeDrag.colWidth > 0 ? Math.round(dx / activeDrag.colWidth) : 0;
       projDayIndex = Math.max(0, Math.min(days.length - 1, dayIndex + dayDelta));
-      // The bin panel sits outside the days grid; a pointer inside its rect
-      // targets the bin instead of a calendar day.
-      const binRect = binRef.current?.getBoundingClientRect();
-      overBin = binRect
-        ? e.clientX >= binRect.left &&
-          e.clientX <= binRect.right &&
-          e.clientY >= binRect.top &&
-          e.clientY <= binRect.bottom
-        : false;
+      // The bin sits outside the days grid. Strefą jest cały zasobnik z
+      // nagłówkiem i przelotem w prawo (tydzień) albo cały arkusz (dzień),
+      // patrz `binDropHit`. Sam panel kart był za wąskim celem przy szybkim
+      // rzucie i blok wracał na siatkę.
+      const pane = binRef.current;
+      const sheetEl = pane?.closest<HTMLElement>('.week-bin-sheet') ?? null;
+      const frameEl = sheetEl ?? pane?.closest<HTMLElement>('.week-cal') ?? null;
+      overBin = binDropHit(
+        e.clientX,
+        e.clientY,
+        pane?.getBoundingClientRect() ?? null,
+        frameEl?.getBoundingClientRect() ?? null,
+        sheetEl !== null,
+      );
     } else if (activeDrag.mode === 'top') {
       // Move the start, keep the end fixed. Min duration one step (0.25h).
       const newStart = Math.max(0, Math.min(baseStart + deltaMin, baseEnd - MINUTE_STEP));
@@ -850,6 +952,8 @@ function TimedBlockImpl({
     return nextDrag;
   };
 
+  projectMoveRef.current = projectMove;
+
   // React pointermove handler: project synchronously into the ref, then coalesce
   // the visual update onto the next animation frame.
   const onPointerMove = (e: React.PointerEvent) => {
@@ -867,9 +971,22 @@ function TimedBlockImpl({
     // Release capture before dispatch — a drop-to-bin unmounts this block.
     releaseCapture();
     dragRef.current = null;
+    clearGrace();
     setDrag(null);
     setMergeTargetId(null);
-    if (!moved.current) return; // treated as a click by onClick
+    if (!moved.current) {
+      dragSyncLog('block:no-move', { entryId: entry.id, mode: finalDrag.mode });
+      return; // treated as a click by onClick
+    }
+    dragSyncLog('block:drop', {
+      entryId: entry.id,
+      mode: finalDrag.mode,
+      overBin,
+      colliding,
+      date: days[projDayIndex],
+      start: projStart,
+      hours: projHours,
+    });
     if (overBin) {
       dispatch({ type: 'MOVE_BLOCK_TO_BIN', entryId: entry.id });
       announceCalendarPractice('move');
@@ -1294,6 +1411,13 @@ function TimedBlockImpl({
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? finish : undefined}
       onPointerCancel={editable ? cancelDrag : undefined}
+      onLostPointerCapture={
+        editable
+          ? () => {
+              if (dragRef.current) armReleaseGrace('lostpointercapture');
+            }
+          : undefined
+      }
       onAnimationEnd={() => {
         if (isFused) setFusedId(null);
       }}
@@ -1599,7 +1723,16 @@ function BinCardImpl({
   // viewport boundaries. Window listeners keep ownership of the gesture until
   // one idempotent finish/cancel path removes every listener and the ghost.
   const listenersRef = useRef<BinDragListeners | null>(null);
+  // Okno łaski na puszczenie (patrz RELEASE_GRACE_MS): zegar anulowania po
+  // ruchu myszy bez przycisku; nasłuchy `up`/`mouseUp` okna już istnieją.
+  const graceTimerRef = useRef<number | null>(null);
+  const clearBinGrace = () => {
+    if (graceTimerRef.current === null) return;
+    window.clearTimeout(graceTimerRef.current);
+    graceTimerRef.current = null;
+  };
   const removeWindowListeners = () => {
+    clearBinGrace();
     const listeners = listenersRef.current;
     if (!listeners) return;
     window.removeEventListener('pointermove', listeners.move, true);
@@ -1756,8 +1889,14 @@ function BinCardImpl({
     return nextDrag;
   };
 
-  const cancelDrag = () => {
+  const cancelDrag = (reason?: unknown) => {
     if (!dragRef.current && !listenersRef.current) return;
+    if (dragRef.current) {
+      dragSyncLog('bin:cancel', {
+        entryId: entry.id,
+        reason: typeof reason === 'string' ? reason : (reason as Event | undefined)?.type ?? 'unknown',
+      });
+    }
     removeWindowListeners();
     dragRef.current = null;
     setDrag(null);
@@ -1775,7 +1914,10 @@ function BinCardImpl({
     dragRef.current = null;
     setDrag(null);
     if (!moved.current) return; // plain click → onClick opens the task
-    if (!finalDrag.valid) return; // poza siatką → cichy powrót do zasobnika
+    if (!finalDrag.valid) {
+      dragSyncLog('bin:drop-outside', { entryId: entry.id });
+      return; // poza siatką → cichy powrót do zasobnika
+    }
     if (finalDrag.colliding) {
       // Snap back + widoczny POWÓD (wiersz nieplanowalny / urlop / spotkanie /
       // blok) — sama czerwień nie tłumaczy odbicia na pozornie pustym polu.
@@ -1796,6 +1938,11 @@ function BinCardImpl({
       );
       return;
     }
+    dragSyncLog('bin:drop', {
+      entryId: entry.id,
+      date: days[finalDrag.colIndex],
+      start: finalDrag.startMin,
+    });
     dispatch({
       type: 'SET_BLOCK_TIME',
       entryId: entry.id,
@@ -1843,9 +1990,18 @@ function BinCardImpl({
         // Recovery for a mouse released outside the browser: the next move has
         // no pressed buttons even when pointerup never reached this window.
         if (pointerType === 'mouse' && event.buttons === 0) {
-          cancelDrag();
+          // Nie anulujemy od razu: na macOS ten ruch przychodzi tuż PRZED
+          // właściwym `pointerup` (patrz RELEASE_GRACE_MS).
+          if (graceTimerRef.current === null) {
+            dragSyncLog('bin:release-grace', { entryId: entry.id });
+            graceTimerRef.current = window.setTimeout(() => {
+              graceTimerRef.current = null;
+              cancelDrag('released-outside');
+            }, RELEASE_GRACE_MS);
+          }
           return;
         }
+        clearBinGrace();
         event.preventDefault();
         projectPointer(event.clientX, event.clientY);
       },

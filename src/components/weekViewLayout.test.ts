@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   AXIS_LABEL_LEAD_PX,
+  binDropHit,
+  contentDelta,
   DONE_TICK_BOTTOM_PX,
   DONE_TICK_SIZE_PX,
   WORK_END_HOUR,
@@ -158,5 +160,63 @@ describe('vacationRenderWindow', () => {
       start: 0,
       end: 1440,
     });
+  });
+});
+
+describe('binDropHit', () => {
+  const pane = { left: 1000, top: 120, right: 1200, bottom: 800 };
+  const frame = { left: 0, top: 60, right: 1200, bottom: 800 };
+
+  it('trafia w panel jak dotąd', () => {
+    expect(binDropHit(1100, 400, pane, frame, false)).toBe(true);
+  });
+
+  it('nagłówek zasobnika nad panelem to też zasobnik', () => {
+    expect(binDropHit(1100, 80, pane, frame, false)).toBe(true);
+  });
+
+  it('przelot za prawą krawędź panelu to nadal zasobnik', () => {
+    expect(binDropHit(1260, 400, pane, frame, false)).toBe(true);
+  });
+
+  it('siatka na lewo od panelu nie jest zasobnikiem', () => {
+    expect(binDropHit(999, 400, pane, frame, false)).toBe(false);
+  });
+
+  it('pasek narzędzi nad kalendarzem nie jest zasobnikiem', () => {
+    expect(binDropHit(1100, 40, pane, frame, false)).toBe(false);
+  });
+
+  it('bez ramy zostaje sam panel', () => {
+    expect(binDropHit(1100, 80, pane, null, false)).toBe(false);
+    expect(binDropHit(1100, 400, pane, null, false)).toBe(true);
+  });
+
+  it('arkusz dnia: cały arkusz z nagłówkiem jest strefą', () => {
+    const sheet = { left: 0, top: 700, right: 390, bottom: 844 };
+    const smallPane = { left: 12, top: 790, right: 378, bottom: 836 };
+    expect(binDropHit(200, 720, smallPane, sheet, true)).toBe(true);
+    expect(binDropHit(200, 690, smallPane, sheet, true)).toBe(false);
+  });
+
+  it('zamknięty arkusz (display: none, prostokąt zerowy) nigdy nie trafia', () => {
+    const zero = { left: 0, top: 0, right: 0, bottom: 0 };
+    expect(binDropHit(0, 0, zero, zero, true)).toBe(false);
+    expect(binDropHit(0, 0, zero, null, false)).toBe(false);
+  });
+});
+
+describe('contentDelta', () => {
+  it('bez przewijania to zwykła różnica wskaźnika', () => {
+    expect(contentDelta(500, 400, 100, 100)).toBe(100);
+  });
+
+  it('przewinięcie w dół o 84 px dokłada godzinę do rozciągania', () => {
+    // Siatka wjechała w górę o 84 px (top 100 -> 16), wskaźnik stoi w miejscu.
+    expect(contentDelta(400, 400, 100, 16)).toBe(84);
+  });
+
+  it('przewinięcie w górę odejmuje', () => {
+    expect(contentDelta(450, 400, 100, 184)).toBe(-34);
   });
 });

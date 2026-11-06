@@ -44,12 +44,30 @@ export function anyLiveSyncHold(): boolean {
  * jest już w reduktorze, ale jej diff nie trafił jeszcze do kolejki. Scalenie
  * w tym oknie nadpisałoby ją wizualnie, a przy zbiegu z tłumioną akcją
  * scalenia (reset bazy diffa) — trwale.
+ *
+ * `wroteSinceFetch` = lustro WYPCHNĘŁO do chmury jakąś lokalną zmianę PO
+ * starcie pobierania snapshotu (epoka zapisów lustra z chwili fetcha różni się
+ * od bieżącej). Snapshot liczono w bazie ZANIM ten zapis tam dotarł, więc mimo
+ * pustej kolejki i czystego lustra jest STARSZY od stanu lokalnego: jego
+ * scalenie cofałoby np. świeżo odhaczony blok („wykonane” z prawego kliku) do
+ * stanu sprzed kliknięcia, a zdarzenie Realtime własnego zapisu przywracało go
+ * dopiero w następnym przebiegu (migotanie zielony → niebieski → zielony,
+ * 2026-09-16). Odraczamy: kolejny przebieg pobierze snapshot, który ten zapis
+ * już zawiera. Kontrola PRZED fetchem pomija pole (nic nie mogło się jeszcze
+ * zestarzeć).
  */
 export function shouldDeferBackgroundMerge(world: {
   held: boolean;
   processing: boolean;
   queuedOps: number;
   mirrorPending: boolean;
+  wroteSinceFetch?: boolean;
 }): boolean {
-  return world.held || world.processing || world.queuedOps > 0 || world.mirrorPending;
+  return (
+    world.held ||
+    world.processing ||
+    world.queuedOps > 0 ||
+    world.mirrorPending ||
+    world.wroteSinceFetch === true
+  );
 }

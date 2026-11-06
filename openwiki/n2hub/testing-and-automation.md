@@ -19,7 +19,10 @@ gate, commit and push.
 ## Browser checks
 
 - Calendar/bin: `browser-check-bin-drag.mjs`, `browser-check-bin-split.mjs`,
-  `browser-check-placement.mjs`.
+  `browser-check-placement.mjs`. Poza macierzą wydania:
+  `browser-check-release-grace.mjs` (szybkie puszczenie z macOS:
+  `buttons === 0` przed `pointerup` ma zapisać ruch, brak puszczenia ma
+  cofnąć; serwer dev na :5173 w trybie lokalnym).
 - Persistence: `browser-check-tab-sync.mjs`.
 - Onboarding: `browser-check-onboarding.mjs` (including the live-plan disclosure
   and confirmation).
