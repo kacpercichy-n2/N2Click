@@ -19,8 +19,16 @@
   pola (`closed`) nigdy nie trafia. Projekcja gestu bloku liczy przesunięcie
   względem TREŚCI siatki (`contentDelta`: różnica pozycji `gridRef` od
   chwycenia), więc przewinięcie w trakcie przeciągania/rozciągania zmienia
-  kwadrans i dzień pod kursorem; podgląd odświeża się przy kolejnym ruchu
-  wskaźnika, zapis zawsze liczy pozycję z `pointerup`. Sygnał „trwa przeciąganie” dla auto-peeku płynie z ISTNIEJĄCEGO
+  kwadrans i dzień pod kursorem; bierny nasłuch `scroll` na
+  `.week-days-viewport` przelicza podgląd w trakcie gestu, zapis zawsze liczy
+  pozycję z `pointerup`. OKNO ŁASKI PUSZCZENIA (2026-11-06, ślad z gładzika
+  Maca: `lostpointercapture` + `pointermove` z `buttons === 0` ~16 ms PRZED
+  `pointerup`, który trafia już w kolumnę dnia): ruch myszy bez przycisku i
+  utrata przechwycenia NIE anulują gestu od razu; `RELEASE_GRACE_MS` (150 ms)
+  czeka na `pointerup`/`mouseup` w dowolnym miejscu okna (blok: tymczasowe
+  nasłuchy okna, zasobnik: istniejące), brak puszczenia = anulowanie jak
+  dawniej (mysz puszczona poza oknem). Regresja:
+  `scripts/browser-check-release-grace.mjs`. Sygnał „trwa przeciąganie” dla auto-peeku płynie z ISTNIEJĄCEGO
   efektu `[dragging]` (`onDragActiveChange` obok `setLiveSyncHold`) i wychodzi
   natychmiast poza trybem dnia — żaden handler wskaźnika się nie zmienia
   (inwariant 7).

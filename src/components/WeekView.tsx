@@ -297,6 +297,17 @@ function statusNoteFor(status: 'done' | 'overdue' | 'open', endDate: string): st
 
 type DragMode = 'move' | 'top' | 'bottom';
 
+/**
+ * Okno łaski na puszczenie przycisku (2026-11-06, ślad z gładzika Kacpra):
+ * Chrome na macOS przy szybkim puszczeniu wysyła NAJPIERW `lostpointercapture`
+ * i `pointermove` z `buttons === 0`, a właściwy `pointerup` dopiero ~16 ms
+ * później i już do elementu pod kursorem (kolumna dnia), nie do bloku. Dawna
+ * heurystyka „mysz bez przycisku = puszczono poza oknem” anulowała wtedy gest.
+ * Teraz taki sygnał tylko otwiera okno: `pointerup`/`mouseup` w dowolnym
+ * miejscu okna w tym czasie kończy gest normalnie, brak = anulowanie.
+ */
+const RELEASE_GRACE_MS = 150;
+
 interface DragState {
   mode: DragMode;
   originX: number;
@@ -579,7 +590,39 @@ function TimedBlockImpl({
   // Escape, pointercancel, window blur, tab hide and a mouse released outside the
   // window. Releases pointer capture defensively, drops the synchronous ref and
   // the React preview, and clears the cross-column merge affordance.
+  // Okno łaski (patrz RELEASE_GRACE_MS): nasłuchy okna na puszczenie +
+  // zegar anulowania. Jedno naraz; sprzątane przez finish, cancelDrag i
+  // odmontowanie.
+  const graceRef = useRef<{ timer: number; up: (ev: Event) => void } | null>(null);
+  const clearGrace = () => {
+    const g = graceRef.current;
+    if (!g) return;
+    window.clearTimeout(g.timer);
+    window.removeEventListener('pointerup', g.up, true);
+    window.removeEventListener('mouseup', g.up, true);
+    graceRef.current = null;
+  };
+  const armReleaseGrace = (reason: string) => {
+    if (graceRef.current || !dragRef.current) return;
+    dragSyncLog('block:release-grace', { entryId: entry.id, reason });
+    const up = (ev: Event) => {
+      clearGrace();
+      // Natywne zdarzenie okna niesie te same pola, których używa projekcja
+      // (`type`, `clientX/Y`); `type !== 'pointermove'` = zwykłe zakończenie.
+      finish(ev as unknown as React.PointerEvent);
+    };
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('mouseup', up, true);
+    const timer = window.setTimeout(() => {
+      clearGrace();
+      cancelDrag('released-outside');
+    }, RELEASE_GRACE_MS);
+    graceRef.current = { timer, up };
+  };
+  useEffect(() => () => clearGrace(), []);
+
   const cancelDrag = (reason?: unknown) => {
+    clearGrace();
     if (dragRef.current) {
       dragSyncLog('block:cancel', {
         entryId: entry.id,
@@ -758,9 +801,11 @@ function TimedBlockImpl({
     // drop synchronously, and that event's buttons are legitimately 0 — it must
     // still commit, so only a genuine pointermove may trigger the cancel.
     if (e.type === 'pointermove' && e.pointerType === 'mouse' && e.buttons === 0) {
-      cancelDrag('pointermove-zero-buttons');
+      armReleaseGrace('pointermove-zero-buttons');
       return null;
     }
+    // Ruch z wciśniętym przyciskiem po fałszywym alarmie: gest trwa dalej.
+    if (e.type === 'pointermove' && graceRef.current) clearGrace();
     // Przesunięcie względem TREŚCI siatki: przewinięcie kalendarza w trakcie
     // gestu też przesuwa kwadrans pod kursorem (dawniej ignorowane).
     const gridNow = gridRef.current?.getBoundingClientRect();
@@ -926,6 +971,7 @@ function TimedBlockImpl({
     // Release capture before dispatch — a drop-to-bin unmounts this block.
     releaseCapture();
     dragRef.current = null;
+    clearGrace();
     setDrag(null);
     setMergeTargetId(null);
     if (!moved.current) {
@@ -1365,6 +1411,13 @@ function TimedBlockImpl({
       onPointerMove={editable ? onPointerMove : undefined}
       onPointerUp={editable ? finish : undefined}
       onPointerCancel={editable ? cancelDrag : undefined}
+      onLostPointerCapture={
+        editable
+          ? () => {
+              if (dragRef.current) armReleaseGrace('lostpointercapture');
+            }
+          : undefined
+      }
       onAnimationEnd={() => {
         if (isFused) setFusedId(null);
       }}
@@ -1670,7 +1723,16 @@ function BinCardImpl({
   // viewport boundaries. Window listeners keep ownership of the gesture until
   // one idempotent finish/cancel path removes every listener and the ghost.
   const listenersRef = useRef<BinDragListeners | null>(null);
+  // Okno łaski na puszczenie (patrz RELEASE_GRACE_MS): zegar anulowania po
+  // ruchu myszy bez przycisku; nasłuchy `up`/`mouseUp` okna już istnieją.
+  const graceTimerRef = useRef<number | null>(null);
+  const clearBinGrace = () => {
+    if (graceTimerRef.current === null) return;
+    window.clearTimeout(graceTimerRef.current);
+    graceTimerRef.current = null;
+  };
   const removeWindowListeners = () => {
+    clearBinGrace();
     const listeners = listenersRef.current;
     if (!listeners) return;
     window.removeEventListener('pointermove', listeners.move, true);
@@ -1928,9 +1990,18 @@ function BinCardImpl({
         // Recovery for a mouse released outside the browser: the next move has
         // no pressed buttons even when pointerup never reached this window.
         if (pointerType === 'mouse' && event.buttons === 0) {
-          cancelDrag('pointermove-zero-buttons');
+          // Nie anulujemy od razu: na macOS ten ruch przychodzi tuż PRZED
+          // właściwym `pointerup` (patrz RELEASE_GRACE_MS).
+          if (graceTimerRef.current === null) {
+            dragSyncLog('bin:release-grace', { entryId: entry.id });
+            graceTimerRef.current = window.setTimeout(() => {
+              graceTimerRef.current = null;
+              cancelDrag('released-outside');
+            }, RELEASE_GRACE_MS);
+          }
           return;
         }
+        clearBinGrace();
         event.preventDefault();
         projectPointer(event.clientX, event.clientY);
       },
