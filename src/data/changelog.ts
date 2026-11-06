@@ -94,13 +94,19 @@ export const CHANGELOG: ChangelogEntry[] = [
     dateFrom: '2026-11-06',
     dateTo: '2026-11-06',
     summary:
-      'Przeciąganie w kalendarzu nie cofa się już przy szybkiej pracy: upuszczona karta, rozciągnięty blok i blok oddany do zasobnika zostają tam, gdzie je puścisz.',
+      'Przeciąganie w kalendarzu nie cofa się już przy szybkiej pracy, także gładzikiem: upuszczona karta, rozciągnięty blok i blok oddany do zasobnika zostają tam, gdzie je puścisz.',
     items: [
       {
         area: 'Kalendarz',
         feature: 'Odświeżenie z serwera nie cofa ruchu',
         description:
           'Kalendarz co chwilę pobiera świeże dane z serwera. Ruch zrobiony w trakcie takiego pobierania (karta z zasobnika na siatkę, rozciągnięcie bloku, oddanie bloku do zasobnika) potrafiły cofnąć dane sprzed tego ruchu. Teraz takie odświeżenie czeka na wersję, która zna już Twój ruch, a dwa odświeżenia nie nachodzą na siebie. To samo usuwa migotanie zielonego ptaszka po „wykonane”.',
+      },
+      {
+        area: 'Kalendarz',
+        feature: 'Szybkie przeciągnięcie gładzikiem',
+        description:
+          'Na gładziku Maca bardzo szybkie przeciągnięcie bloku albo karty z zasobnika potrafiło wrócić na start, bo przeglądarka zgłaszała puszczenie przycisku chwilę przed właściwym puszczeniem. Kalendarz czeka teraz na to puszczenie i zapisuje ruch tam, gdzie go skończysz.',
       },
       {
         area: 'Kalendarz',
