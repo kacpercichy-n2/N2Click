@@ -639,6 +639,30 @@ function TimedBlockImpl({
     };
   }, [dragging, holdKey, onDragActiveChange]);
 
+  // Przewinięcie siatki w trakcie gestu (kółko, bezwładność gładzika) nie daje
+  // `pointermove`, więc podgląd zostawał na starym kwadransie, a `finish` i tak
+  // zapisywał pozycję pod kursorem. Ten OBSERWATOR przelicza projekcję z
+  // ostatnich współrzędnych wskaźnika przy każdym przewinięciu. Bierny nasłuch
+  // `scroll`, bez przechwycenia i bez udziału w sprzątaniu gestu (inwariant 7).
+  const projectMoveRef = useRef<(e: React.PointerEvent) => DragState | null>(() => null);
+  useEffect(() => {
+    if (!dragging) return;
+    const scroller = gridRef.current?.closest<HTMLElement>('.week-days-viewport') ?? null;
+    if (!scroller) return;
+    const onScroll = () => {
+      const d = dragRef.current;
+      if (!d) return;
+      // `type: 'scroll'` omija heurystykę „mysz bez wciśniętych przycisków”,
+      // która dotyczy wyłącznie prawdziwego `pointermove`.
+      const synthetic = { type: 'scroll', clientX: d.clientX, clientY: d.clientY };
+      if (projectMoveRef.current(synthetic as unknown as React.PointerEvent)) scheduleFlush();
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => scroller.removeEventListener('scroll', onScroll);
+    // scheduleFlush czyta wyłącznie refy; gridRef jest stabilny.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragging]);
+
   // Deferred drag start. `init` is captured SYNCHRONOUSLY in the handler because
   // React nulls `e.currentTarget` after dispatch — the touch path runs this only
   // after the long press elapses (see useTouchDragGate), so it may never read the
@@ -759,8 +783,8 @@ function TimedBlockImpl({
       const dayDelta = activeDrag.colWidth > 0 ? Math.round(dx / activeDrag.colWidth) : 0;
       projDayIndex = Math.max(0, Math.min(days.length - 1, dayIndex + dayDelta));
       // The bin sits outside the days grid. Strefą jest cały zasobnik z
-      // nagłówkiem i przelotem w prawo (tydzień) albo cały arkusz (dzień) —
-      // patrz `binDropHit`; sam panel kart był za wąskim celem przy szybkim
+      // nagłówkiem i przelotem w prawo (tydzień) albo cały arkusz (dzień),
+      // patrz `binDropHit`. Sam panel kart był za wąskim celem przy szybkim
       // rzucie i blok wracał na siatkę.
       const pane = binRef.current;
       const sheetEl = pane?.closest<HTMLElement>('.week-bin-sheet') ?? null;
@@ -875,6 +899,8 @@ function TimedBlockImpl({
     dragRef.current = nextDrag;
     return nextDrag;
   };
+
+  projectMoveRef.current = projectMove;
 
   // React pointermove handler: project synchronously into the ref, then coalesce
   // the visual update onto the next animation frame.

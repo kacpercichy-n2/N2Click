@@ -299,6 +299,18 @@ describe('budzik odłożonego zdarzenia za utkniętym przebiegiem', () => {
     expect(woke()).toBe(1);
   });
 
+  it('park po limicie utkniętego przebiegu nie nastawia budzika (brak pętli co debounce)', () => {
+    const { clock, c, woke } = make();
+    c.begin();
+    clock.advance(STALE);
+    c.park(); // powód odłożenia już inny niż przebieg w locie
+    c.takeParked();
+    c.park();
+    expect(clock.pending()).toBe(0);
+    clock.advance(STALE * 2);
+    expect(woke()).toBe(0);
+  });
+
   it('dispose kasuje budzik', () => {
     const { clock, c, woke } = make();
     c.begin();

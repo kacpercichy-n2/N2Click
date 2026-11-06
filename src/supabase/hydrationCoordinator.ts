@@ -172,7 +172,10 @@ export function createHydrationCoordinator(
     },
     park: () => {
       parked = true;
-      if (flying) armAlarm();
+      // Przebieg już po limicie: powód odłożenia jest inny (np. kolejka po
+      // błędzie, ręczne „Odśwież” w toku), a jego ścieżka sama zdejmie
+      // zdarzenie. Budzik z czekaniem 0 kręciłby pętlę co debounce.
+      if (flying && !isStale()) armAlarm();
     },
     hasParked: () => parked,
     takeParked: () => {
